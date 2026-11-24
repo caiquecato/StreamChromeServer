@@ -1,99 +1,30 @@
-# StreamChrome PRO
+# StreamChrome Server
 
-![Application icon](docs/figures/app-icon.png)
+Self-hosted Windows media server, browser player, Stremio addon bridge, and Jellyfin TV companion built on Python standard library, FFmpeg, `yt-dlp`, and vanilla HTML/CSS/JS.
 
-A Windows companion app and browser launcher for playing local videos in your browser, with selectable subtitles and five switchable layouts.
+## Features
 
-## Install and open
+- **Local Catalog (`Local`):** Indexes movies (`Filmes/<Movie (Year)>`) and TV series (`Series/<Show (Year)>/Season XX`) on disk with IMDb, Rotten Tomatoes, TVMaze posters, FFprobe technical specs (resolution, bitrate Mbps, codec/profile, FPS, audio tracks), and watch progress.
+- **Discover & Stremio Addons (`Descobrir`):** Browse Trending and Top IMDb catalogs, paste any HTTPS Stremio addon `manifest.json` URL (including AIOStreams / Debrid addons), filter sources (`4K`, `1080p`, `PT / Dual`), stream directly in the browser player, or queue direct downloads straight into `Filmes` / `Series`.
+- **Direct Downloader & `yt-dlp` Integration:** Supports concurrent HTTPS/Debrid direct downloads with `.part` HTTP Range resume and `yt-dlp` links, organizing downloaded files into `<Title (Year)>` folders and triggering instant local + Jellyfin library scans.
+- **Player & Live Floating Miniplayer:** FFmpeg remux (`-c:v copy` with NVIDIA RTX VSR compatibility) or NVENC/x264 transcoding, multi-audio track switching, SubDL + OpenSubtitles + addon subtitles, and an active 16:9 floating miniplayer while browsing tabs.
+- **Smart TV & Away-from-Home Access (`TV & Remoto`):** Automatically starts and links a bundled portable Jellyfin server (`:8096`) alongside the web hub (`:8780`) with LAN QR codes, M3U playlist (`/tv.m3u`), Windows Firewall rule helper, and optional PIN-protected Cloudflare Tunnel (`cloudflared`) HTTPS access without Tailscale or router port forwarding.
+- **Windows Integration:** System tray control, optional automatic startup with Windows (`HKCU\...\Run`), and zero `.cmd` or `.bat` clutter.
 
-1. Download **StreamChromePro-Setup-2.5.0.exe** from Releases and run it. The application installs for your Windows account without an administrator prompt.
-2. FFmpeg, FFprobe and Python are included. No separate installation or PATH configuration is needed.
-3. Open **StreamChrome PRO** from the Start menu. Choose **Open file**, then select your video. Files stay on your computer.
-4. Use **Exit** at the far right to stop the application. Closing the browser tab leaves the local server running. You can also right-click its tray icon and choose **Exit / Sair**.
+## Security & Credentials
 
-## Browser extension
+- Personal subtitle API keys, Stremio addon manifest URLs (which may contain private addon or Debrid tokens), remote PINs, and Jellyfin link credentials are encrypted locally per Windows user via **DPAPI** inside `data/server_settings.dat` (outside version control).
+- Browser APIs expose only masked addon URLs and opaque per-session tokens (`local:`, `addon:`, `remote:`).
 
-![Browser launcher](docs/figures/extension-popup.jpg)
+## Running from Source
 
-The extension opens the installed StreamChrome PRO application from the browser toolbar.
-
-**Chrome / Chromium:** extract `StreamChromePro-Chromium-2.4.3.zip`. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select the extracted folder. Click the extension icon, then **Open player**.
-
-**Firefox:** the Firefox package is provided for temporary developer testing through `about:debugging` → This Firefox → Load Temporary Add-on. Permanent installation requires Mozilla signing; this release is not signed or listed in an add-on store.
-
-**Opera:** experimental. Chrome is the primary supported browser for this beta.
-
-The Windows installer registers the native launcher for Chrome, Edge and Firefox. Install the browser extension separately using the steps above.
-
-## Download a video
-
-Paste a link in **Open URL** and click **Play link**. Playback starts while download options are prepared. Expand **Download video**, select a quality and click **Download video**. Progress and cancellation stay in the Media panel. When the download finishes, click **Open in player**.
-
-Files are saved under `Downloads\StreamChromePro` by default. Use **Save folder** to choose another location. The app accepts individual videos; playlist and live-stream downloads are not included. Downloads depend on site availability and access requirements. Browser cookies are not imported automatically.
-
-## Subtitles
-
-Open **Subtitles** and expand **Subtitle settings**. Supply your personal [SubDL API key](https://subdl.com/developers), your [OpenSubtitles.com API key](https://www.opensubtitles.com/en/consumers), or both. OpenSubtitles username and password are optional. Provider download quotas apply.
-
-Search by movie or series title, select a language, and provide season/episode for series. Choose a result and click **Open selected subtitle**. No result is automatically downloaded or applied. A local SRT/VTT can also be opened under Subtitle options. Subtitle delay, size and color are adjustable.
-
-Keys are protected with Windows DPAPI in your local application data, outside this repository. Do not include credentials in issues or screenshots.
-
-## Appearance and NVIDIA video
-
-Choose Cinema, Classic, Studio, Library or Quiet Glass under **Appearance**, with light/dark themes. The interface defaults to English and offers Portuguese and Spanish.
-
-### Cinema
-
-| Dark | Light |
-|---|---|
-| ![Cinema dark](docs/figures/cinema-dark.jpg) | ![Cinema light](docs/figures/cinema-light.jpg) |
-
-### Classic
-
-| Dark | Light |
-|---|---|
-| ![Classic dark](docs/figures/classic-dark.jpg) | ![Classic light](docs/figures/classic-light.jpg) |
-
-### Studio
-
-| Dark | Light |
-|---|---|
-| ![Studio dark](docs/figures/studio-dark.jpg) | ![Studio light](docs/figures/studio-light.jpg) |
-
-### Library
-
-| Dark | Light |
-|---|---|
-| ![Library dark](docs/figures/library-dark.jpg) | ![Library light](docs/figures/library-light.jpg) |
-
-### Quiet Glass
-
-| Dark | Light |
-|---|---|
-| ![Quiet Glass dark](docs/figures/glass-dark.jpg) | ![Quiet Glass light](docs/figures/glass-light.jpg) |
-
-Use **Original** mode to preserve supported HEVC, H.264 and AV1 video. Choose **H.264 compatibility** if the original format does not play; conversion may increase CPU usage.
-
-For NVIDIA RTX Video, enable Super Resolution or HDR in the NVIDIA app and check its activity indicator during playback. Availability depends on the GPU, driver, browser and video. **Playback information** displays resolution, dropped frames and buffer statistics.
-
-## Limits of this beta
-
-- Windows 10/11, Chrome as primary browser. Other browsers require testing.
-- Supported media formats depend on the browser and FFmpeg. Subtitle timing varies between releases.
-- No code-signing certificate: Windows may display an unknown-publisher notice.
-- The browser extension is distributed for developer loading; store publication/signing is separate.
-
-## Develop
-
-Use Python 3 and Node.js for tests. Install Python build dependencies with `pip install -r requirements-build.txt`. Run `python -m unittest discover -s tests` and each `tests/*.cjs` with Node. See [build instructions](docs/BUILD.md).
-
-The project runs only on loopback. The native bridge accepts the single `open` action and launches only the adjacent player executable. 
-
-## Credits and support
-
-Video downloading is powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp), maintained by the yt-dlp contributors. Its license and bundled third-party notices are included in the Windows installation.
-
-Created by **OhCato**. [Support development](https://buymeacoffee.com/caique1704u).
-
-FFmpeg, Python, Pillow, pystray and browser APIs belong to their respective maintainers. [FFmpeg distribution details and licenses](docs/THIRD_PARTY.md) are included with the installer. A project license has not yet been selected.
+1. Install Python 3.11+ and place portable `ffmpeg.exe`, `ffprobe.exe`, `yt-dlp.exe`, `cloudflared.exe`, and `jellyfin` under `D:\StreamServer\app\`.
+2. Start the server:
+   ```powershell
+   python src\server_pro.py
+   ```
+3. Run tests:
+   ```powershell
+   python -m unittest discover -s tests -v
+   Get-ChildItem tests\*.cjs | ForEach-Object { node $_.FullName }
+   ```

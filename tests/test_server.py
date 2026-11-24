@@ -121,5 +121,237 @@ class ServerTests(unittest.TestCase):
         status, _ = self.request('/stream?url=https%3A%2F%2Fexample.org%2Fmovie.mkv&t=nan')
         self.assertEqual(status, 400)
 
+    def test_catalog_scan_series_sidecar_and_range_media(self):
+        from catalog_service import CatalogService
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'StreamServer'
+            (root / 'Filmes').mkdir(parents=True)
+            show_dir = root / 'Series' / 'Severance' / 'Season 01'
+            show_dir.mkdir(parents=True)
+            movie = root / 'Filmes' / 'Paprika.2006.mp4'
+            movie.write_bytes(b'0123456789ABCDEF')
+            ep = show_dir / 'Severance.S01E01.mp4'
+            ep.write_bytes(b'episode-bytes')
+            sub = root / 'Filmes' / 'Paprika.2006.pt-BR.srt'
+            sub.write_text('1\n00:00:01,000 --> 00:00:02,000\nOla\n', encoding='utf-8')
+            cat = CatalogService(root, Path(tmp) / 'data', enable_online_metadata=False)
+            self.assertEqual(cat.scan(async_enrich=False), 2)
+            with patch.object(server, 'CATALOG', cat), patch.object(server, 'SERVER_ROOT', root):
+                st, body = self.request('/api/catalog')
+                self.assertEqual(st, 200)
+                home = json.loads(body)
+                self.assertEqual(home['stats']['movies'], 1)
+                self.assertEqual(home['stats']['series'], 1)
+                m_item = home['movies'][0]
+                self.assertEqual(len(m_item['subtitles']), 1)
+
+                st_s, s_body = self.request('/api/catalog/series?key=' + home['series'][0]['series_key'])
+                self.assertEqual(st_s, 200)
+                self.assertEqual(json.loads(s_body)['seasons'][0]['episodes'][0]['episode'], 1)
+
+                st_o, o_body = self.request('/api/catalog/open', {'id': m_item['id']})
+                self.assertEqual(st_o, 200)
+                self.assertNotIn(tmp.encode(), o_body)
+
+                st_sub, sub_body = self.request('/api/catalog/subtitle?id=' + m_item['subtitles'][0]['id'])
+                self.assertEqual(st_sub, 200)
+                self.assertIn(b'WEBVTT', sub_body)
+
+                st_r, r_body = self.request('/media/' + m_item['id'], extra_headers={'Range': 'bytes=4-9'})
+                self.assertEqual(st_r, 206)
+                self.assertEqual(r_body, b'456789')
+
+    def test_remote_pin_gate_and_lan_host_guard(self):
+        from remote_access import RemoteAccessService
+        port = self.httpd.server_address[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            rem = RemoteAccessService(Path(tmp) / 'settings.dat', hub_port=port)
+            rem.set_pin('1234')
+            rem._slots['hub'].host = 'demo.trycloudflare.com'
+            prev_lan = self.httpd.lan_mode
+            self.httpd.lan_mode = True
+            try:
+                with patch.object(server, 'REMOTE', rem):
+                    self.assertEqual(self.request('/api/settings', extra_headers={'Host': f'192.168.1.3:{port}'})[0], 200)
+                    self.assertEqual(self.request('/api/settings', extra_headers={'Host': f'attacker.example:{port}'})[0], 403)
+                    # External Cloudflare tunnel requires PIN cookie
+                    ext_hdr = {'Host': f'demo.trycloudflare.com', 'Cf-Connecting-Ip': '8.8.8.8'}
+                    self.assertEqual(self.request('/api/catalog', extra_headers=ext_hdr)[0], 401)
+                    st_page, page = self.request('/', extra_headers=ext_hdr)
+                    self.assertEqual(st_page, 200)
+                    self.assertIn(b'pinForm', page)
+
+                    # Authenticate with PIN and get cookie
+                    conn = http.client.HTTPConnection(*self.httpd.server_address, timeout=4)
+                    conn.request('POST', '/api/remote/auth', json.dumps({'pin': '1234'}), {'Content-Type': 'application/json', 'X-StreamChrome': '1', **ext_hdr})
+                    resp = conn.getresponse()
+                    cookie = resp.getheader('Set-Cookie').split(';', 1)[0]
+                    resp.read()
+                    conn.close()
+                    self.assertEqual(resp.status, 200)
+                    self.assertEqual(self.request('/api/settings', extra_headers={**ext_hdr, 'Cookie': cookie})[0], 200)
+            finally:
+                self.httpd.lan_mode = prev_lan
+
+    def test_stremio_imdb_and_desktop_loopback_guards(self):
+        from stremio_imdb import StremioAddonManager, get_meta
+        with self.assertRaises(ValueError):
+            get_meta('movie', 'bad-id')
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr = StremioAddonManager(Path(tmp) / 'addons.dat')
+            with self.assertRaises(ValueError):
+                mgr.add_addon('http://insecure.example/manifest.json')
+        with patch.object(server, 'is_loopback_client', return_value=False):
+            self.assertEqual(self.request('/api/shutdown', {})[0], 403)
+            self.assertEqual(self.request('/api/remote/pin', {'pin': '9999'})[0], 403)
+
+    def test_addon_stream_tokens_masking_and_subtitles(self):
+        from stremio_imdb import StremioAddonManager, _parse_addon_stream, mask_manifest_url
+        secret_url = 'https://addon.example.invalid/stremio/user-id-123/secret-payload-xyz/manifest.json'
+        masked = mask_manifest_url(secret_url)
+        self.assertNotIn('user-id-123', masked)
+        self.assertNotIn('secret-payload-xyz', masked)
+        self.assertTrue(masked.endswith('/manifest.json'))
+
+        parsed = _parse_addon_stream('AIOStreams', {
+            'name': '[TB⚡] StremThru 2160p',
+            'description': '🎬 4K HDR\n🌎 Portuguese | English\n💾 12.50 GB\n📁 Paprika.2006.2160p.mkv',
+            'url': 'https://cdn.example.invalid/stream/secret-hash/Paprika.2006.2160p.mkv',
+            'behaviorHints': {'filename': 'Paprika.2006.2160p.mkv', 'videoSize': 13421772800, 'bingeGroup': 'tb-4k'},
+        }, 'movie', 'tt0851578')
+        self.assertTrue(parsed['playable'])
+        self.assertEqual(parsed['resolution'], '4K')
+        self.assertTrue(parsed['pt_audio'])
+        self.assertTrue(parsed['cached'])
+        self.assertTrue(parsed['stream_token'].startswith('addon:'))
+        self.assertNotIn('url', parsed)
+        self.assertEqual(server.resolve_target_url(parsed['stream_token']), 'https://cdn.example.invalid/stream/secret-hash/Paprika.2006.2160p.mkv')
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr = StremioAddonManager(Path(tmp) / 'addons.dat')
+            with patch('stremio_imdb._http_json', return_value={'id': 'org.aiostreams', 'name': 'AIOStreams', 'resources': ['stream', 'subtitles']}):
+                addons = mgr.add_addon(secret_url)
+            self.assertEqual(len(addons), 1)
+            self.assertNotIn('url', addons[0])
+            self.assertNotIn('secret-payload-xyz', addons[0]['masked_url'])
+            with patch.object(server, 'ADDONS', mgr), \
+                 patch.object(mgr, 'resolve_subtitles', return_value=[{'url': 'https://subdl.example/pt.srt', 'lang': 'pob', 'release': 'BluRay', 'addon': 'AIOStreams'}]), \
+                 patch.object(server, 'http_json', return_value={'subtitles': [{'url': 'https://os.example/en.srt', 'lang': 'eng'}]}):
+                subs = server.fetch_stremio_subtitles('tt0851578')
+            self.assertEqual(len(subs), 2)
+            self.assertEqual(subs[0]['lang'], 'pob')
+
+    def test_library_downloader_paths_resume_cancel_and_indexing(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from catalog_service import CatalogService
+        from library_downloader import LibraryDownloadService
+        from stremio_imdb import register_addon_stream
+
+        payload_bytes = b'MKV-HEADER-' + (b'A' * 65536)
+
+        class MockCdnHandler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                return
+
+            def do_GET(self):
+                if 'slow' in self.path:
+                    self.send_response(200)
+                    self.send_header('Content-Length', str(len(payload_bytes) * 10))
+                    self.end_headers()
+                    for _ in range(20):
+                        time.sleep(0.05)
+                        try:
+                            self.wfile.write(b'Z' * 4096)
+                            self.wfile.flush()
+                        except OSError:
+                            break
+                    return
+                rng = self.headers.get('Range', '')
+                start = int(rng.split('=')[1].split('-')[0]) if rng.startswith('bytes=') else 0
+                slice_bytes = payload_bytes[start:]
+                self.send_response(206 if start > 0 else 200)
+                if start > 0:
+                    self.send_header('Content-Range', f'bytes {start}-{len(payload_bytes) - 1}/{len(payload_bytes)}')
+                self.send_header('Content-Length', str(len(slice_bytes)))
+                self.end_headers()
+                self.wfile.write(slice_bytes)
+
+        cdn = ThreadingHTTPServer(('127.0.0.1', 0), MockCdnHandler)
+        cdn_thread = threading.Thread(target=cdn.serve_forever, daemon=True)
+        cdn_thread.start()
+        try:
+            cdn_port = cdn.server_address[1]
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / 'StreamServer'
+                cat = CatalogService(root, Path(tmp) / 'data', enable_online_metadata=False)
+                done_event = threading.Event()
+
+                def on_done(job):
+                    cat.scan(async_enrich=False)
+                    cat.assign_imdb_id(job['target_path'], job.get('imdb_id', ''))
+                    done_event.set()
+
+                dl = LibraryDownloadService(root, on_complete=on_done)
+                token_ep = register_addon_stream({
+                    'url': f'http://127.0.0.1:{cdn_port}/media/Severance.S01E02.mkv',
+                    'headers': {},
+                    'ffmpeg_headers': '',
+                    'filename': 'Severance.S01E02.mkv',
+                    'video_size': len(payload_bytes),
+                    'video_id': 'tt11280740:1:2',
+                    'kind': 'series',
+                    'imdb_id': 'tt11280740',
+                    'season': 1,
+                    'episode': 2,
+                })
+                job = dl.enqueue_from_token({
+                    'stream_token': token_ep,
+                    'kind': 'series',
+                    'title': 'Severance: Season One',
+                    'year': '2022',
+                    'season': 1,
+                    'episode': 2,
+                    'imdb_id': 'tt11280740',
+                })
+                self.assertTrue(done_event.wait(5))
+                expected_rel = 'Series/Severance Season One (2022)/Season 01/Severance.S01E02.mkv'
+                self.assertEqual(job['rel_path'], expected_rel)
+                target_file = root / expected_rel
+                self.assertEqual(target_file.read_bytes(), payload_bytes)
+                self.assertEqual(len(cat.find_local_by_imdb('tt11280740')), 1)
+
+                with patch.object(server, 'CATALOG', cat), \
+                     patch.object(cat, '_probe_video', return_value={'duration': 3120.0, 'width': 3840, 'height': 2160, 'video_codec': 'hevc', 'bitrate_bps': 18500000, 'fps': '23.98 fps', 'video_profile': 'HEVC · Main 10 · 10-bit', 'audio_summary': 'EN EAC3 6ch', 'subtitle_summary': 'POR, ENG'}):
+                    st_d, d_body = self.request('/api/catalog/details?series_key=' + cat.get_home_catalog()['series'][0]['series_key'])
+                    self.assertEqual(st_d, 200)
+                    details = json.loads(d_body)
+                    self.assertEqual(details['bitrate_label'], '18.5 Mbps')
+                    self.assertIn('4K UHD', details['resolution_label'])
+                    self.assertEqual(details['fps'], '23.98 fps')
+
+                token_cancel = register_addon_stream({
+                    'url': f'http://127.0.0.1:{cdn_port}/slow/Movie.mkv',
+                    'headers': {},
+                    'ffmpeg_headers': '',
+                    'filename': 'Movie.2024.mkv',
+                    'video_size': len(payload_bytes) * 10,
+                    'video_id': 'tt9999999',
+                    'kind': 'movie',
+                    'imdb_id': 'tt9999999',
+                })
+                c_job = dl.enqueue_from_token({'stream_token': token_cancel, 'kind': 'movie', 'title': 'Cancel Movie', 'year': '2024'})
+                time.sleep(0.12)
+                dl.cancel(c_job['id'])
+                for _ in range(30):
+                    cur = next(j for j in dl.list_jobs() if j['id'] == c_job['id'])
+                    if cur['state'] == 'cancelled':
+                        break
+                    time.sleep(0.05)
+                self.assertEqual(cur['state'], 'cancelled')
+        finally:
+            cdn.shutdown()
+            cdn.server_close()
+            cdn_thread.join()
+
 if __name__ == '__main__':
     unittest.main()

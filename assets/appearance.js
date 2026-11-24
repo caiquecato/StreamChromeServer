@@ -1,7 +1,7 @@
 (function(root){
     'use strict';
     const KEY='streamchrome.appearance.v1';
-    const LAYOUTS=['cinema','classic','studio','library','glass'];
+    const LAYOUTS=['neutral','cinema','classic','studio','library','glass'];
     const THEMES=['dark','light'];
     const LANGUAGES=['en','pt','es'];
     function normalizePreferences(input){

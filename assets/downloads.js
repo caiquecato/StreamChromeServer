@@ -16,7 +16,7 @@
   if(job.total>0)$('downloadProgress').value=progress;else $('downloadProgress').removeAttribute('value');
   if(job.state==='downloading')message(`${progress.toFixed(1)}% · ${(job.speed/1048576).toFixed(1)} MB/s`);
   else if(job.state==='processing')message('Preparing the downloaded video...');
-  else if(job.state==='complete')message('Download complete.');
+  else if(job.state==='complete'){message('Download complete.');window.loadCatalog?.();}
   else if(job.state==='cancelled')message('Download cancelled.');
   else if(job.state==='failed')message(job.error);
  }

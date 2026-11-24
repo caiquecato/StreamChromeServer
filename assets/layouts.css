@@ -330,3 +330,15 @@ html[data-layout] .player-wrapper[data-cursor-hidden='true'],html[data-layout] .
 html[data-layout='classic'] .card-input .download-panel,html[data-layout='library'] .card-input .download-panel{grid-column:1/-1}
 
 .download-panel{display:block}.download-panel>summary,.download-options>summary{font-size:12px;cursor:pointer;color:var(--text-main)}.download-panel[open]>summary{margin-bottom:12px}.download-panel>#analyzeDownload{width:100%;margin-bottom:8px}.download-options{margin-top:12px}.download-options>summary{color:var(--text-muted)}#chooseDownloadFolder{margin:10px 0 5px;min-height:28px!important;font-size:11px!important;padding:4px 8px!important;background:transparent;border-color:var(--border)}.download-location{margin-top:4px}.download-panel .input-row{margin-top:8px}
+
+/* Neutral: default minimalist stone & matte graphite theme matching StreamChrome Server */
+html[data-layout='neutral']{--bg-base:#111110;--bg-surface:#181816;--bg-card:#21211e;--field:#141412;--border:#2c2c28;--text-main:#edeae3;--text-muted:#9a968d;--focus:#e2ddd2;--accent:#e2ddd2;--accent-hover:#f1ede4;--radius-md:6px;--radius-lg:10px}
+html[data-layout='neutral'][data-theme='light']{--bg-base:#f3f1ec;--bg-surface:#faf9f6;--bg-card:#e7e3da;--field:#ffffff;--border:#d2cdc2;--text-main:#181715;--text-muted:#5e5a52;--focus:#22211e;--accent:#22211e;--accent-hover:#363430}
+html[data-layout='neutral'] ::selection{background:var(--accent);color:#141412}
+html[data-layout='neutral'][data-theme='light'] ::selection{background:var(--accent);color:#f7f5f0}
+html[data-layout='neutral'] .sidebar{position:absolute;z-index:12;right:14px;bottom:78px;width:360px;max-height:calc(100dvh - 150px);overflow:auto;border:1px solid var(--border);border-radius:10px;box-shadow:var(--panel-shadow);scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+html[data-layout='neutral'] body[data-panel-open='false'] .sidebar{display:none}
+html[data-layout='neutral'] .btn-play,html[data-layout='neutral'] #openSubtitleButton{color:#141412}
+html[data-layout='neutral'][data-theme='light'] .btn-play,html[data-layout='neutral'][data-theme='light'] #openSubtitleButton{color:#f7f5f0}
+html[data-layout='neutral'] .seek-bar-fill{background:var(--accent)}
+html[data-layout='neutral'] .vol-slider{accent-color:var(--accent)}

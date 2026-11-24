@@ -1,10 +1,20 @@
 """Local download jobs backed by the official yt-dlp executable."""
-import json,os,secrets,subprocess,threading
+import json,os,re,secrets,subprocess,threading
 from pathlib import Path
 from urllib.parse import urlparse
 from process_guard import attach_to_server
+from subtitles import guess_search
 
 NO_WINDOW=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0
+_INVALID_WIN_CHARS=re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_RESERVED_WIN_NAMES={'CON','PRN','AUX','NUL',*(f'COM{i}' for i in range(1,10)),*(f'LPT{i}' for i in range(1,10))}
+
+def _safe_name(text,fallback='Video',max_len=100):
+    cleaned=_INVALID_WIN_CHARS.sub(' ',str(text or ''))
+    cleaned=re.sub(r'\s+',' ',cleaned).strip().rstrip('. ')
+    if not cleaned or cleaned in ('.','..') or cleaned.upper() in _RESERVED_WIN_NAMES:
+        return fallback
+    return cleaned[:max_len].rstrip('. ') or fallback
 
 def validate_link(value):
     if not isinstance(value,str) or len(value)>8192:raise ValueError('Paste a valid HTTP/HTTPS video link.')
@@ -64,6 +74,30 @@ class DownloadService:
             source=validate_link(video['url'])
             extra=audio if audio and audio['url']!=video['url'] else None
             return source,{'headers':headers(video),'audio_url':validate_link(extra['url']) if extra else None,'audio_headers':headers(extra) if extra else '', 'title':job['title']}
+    def build_target_folder_and_template(self,job):
+        info=job.get('info') or {}
+        guessed=guess_search(job.get('title') or '')
+        dest=Path(job.get('destination') or self.destination)
+        dest_lower=dest.name.lower()
+        is_series=bool(info.get('series') or info.get('season_number') or guessed.get('type')=='series' or dest_lower=='series')
+        raw_year=str(info.get('release_year') or str(info.get('upload_date') or '')[:4] or guessed.get('year') or '')
+        year_m=re.search(r'(19|20)\d{2}',raw_year)
+        year=year_m.group(0) if year_m else ''
+        raw_title=info.get('series') if is_series and info.get('series') else (guessed.get('title') or job.get('title') or 'Video')
+        clean_title=_safe_name(raw_title,fallback='Video',max_len=90)
+        folder_name=f'{clean_title} ({year})' if year else clean_title
+        base_root=dest.parent if dest_lower in ('filmes','series') else None
+        if is_series:
+            season=max(1,int(info.get('season_number') or guessed.get('season') or 1))
+            episode=max(1,int(info.get('episode_number') or guessed.get('episode') or 1))
+            root_cat=(base_root/'Series') if base_root else dest
+            folder=(root_cat/_safe_name(folder_name,max_len=100)/f'Season {season:02d}')
+            template=f'{clean_title} - S{season:02d}E{episode:02d}.%(ext)s'
+        else:
+            root_cat=(base_root/'Filmes') if base_root else dest
+            folder=(root_cat/_safe_name(folder_name,max_len=100))
+            template=f'{folder_name}.%(ext)s'
+        return folder,template
     def start(self,token,quality):
         with self.lock:
             job=self.jobs.get(token)
@@ -75,12 +109,12 @@ class DownloadService:
             threading.Thread(target=self._download,args=(job,quality),daemon=True).start()
             return self.status(token)
     def _download(self,job,quality):
-        folder=job['destination']/job['id'];process=None
+        folder,template=self.build_target_folder_and_template(job);process=None
         try:
             folder.mkdir(parents=True,exist_ok=True)
             height='' if quality=='best' else f'[height<={int(quality)}]'
             selection=f'bv*{height}+ba/b{height}'
-            args=self.command()+['--newline','--progress','--progress-template','download:PROGRESS:%(progress)j','--print','after_move:FILE:%(filepath)j','--no-simulate','--windows-filenames','--no-overwrites','--merge-output-format','mkv','-f',selection,'-P',str(folder),'-o','%(title).160B [%(id)s].%(ext)s','--',job['url']]
+            args=self.command()+['--newline','--progress','--progress-template','download:PROGRESS:%(progress)j','--print','after_move:FILE:%(filepath)j','--no-simulate','--windows-filenames','--no-overwrites','--merge-output-format','mkv','-f',selection,'-P',str(folder),'-o',template,'--',job['url']]
             process=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding='utf-8',errors='replace',creationflags=NO_WINDOW)
             attach_to_server(process)
             with self.lock:job['process']=process

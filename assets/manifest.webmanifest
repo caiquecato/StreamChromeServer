@@ -1,0 +1,8 @@
+{
+  "name": "StreamChrome Server",
+  "short_name": "StreamServer",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#111110",
+  "theme_color": "#181816"
+}

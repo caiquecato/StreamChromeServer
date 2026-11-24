@@ -10,7 +10,7 @@ const caption={textContent:'A selected movie caption'};
 const document={documentElement:{dataset:{}},body:{dataset:{}},querySelectorAll(){return[];},getElementById(id){return id==='mainVideo'?video:id==='subtitleText'?caption:null;},dispatchEvent(){},addEventListener(){}};
 const ui=createController({document,storage,i18n:{translate:text=>text}});
 ui.init();
-for(const layout of ['cinema','classic','studio','library','glass']){
+for(const layout of ['neutral','cinema','classic','studio','library','glass']){
  for(const theme of ['dark','light']){
   ui.update({layout,theme,language:'es'});
   assert.equal(document.documentElement.dataset.layout,layout);
