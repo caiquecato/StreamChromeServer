@@ -494,7 +494,7 @@ class CatalogService:
                         if row['series_key'] not in series_cache:
                             with self._connect() as conn:
                                 existing_s = conn.execute(
-                                    "SELECT imdb_id, poster_file, overview, cast_text, rating, rt_critics, rt_audience, genres_text, director_text FROM media_items WHERE series_key = ? AND poster_file != '' LIMIT 1",
+                                    "SELECT imdb_id, poster_file, overview, cast_text, rating, rt_critics, rt_audience, genres_text, director_text FROM media_items WHERE series_key = ? AND poster_file != '' AND substr(poster_file, 1, 6) != 'thumb_' LIMIT 1",
                                     (row['series_key'],),
                                 ).fetchone()
                             if existing_s:
@@ -620,7 +620,7 @@ class CatalogService:
             grp['episode_count'] += 1
             grp['seasons'].add(ep['season'] or 1)
             grp['latest_mtime'] = max(grp['latest_mtime'], ep['mtime'])
-            if not grp['poster_url'] and ep['poster_url']:
+            if ep['poster_url'] and (not grp['poster_url'] or '/thumb_' in grp['poster_url'] and '/thumb_' not in ep['poster_url']):
                 grp['poster_url'] = ep['poster_url']
             if not grp['backdrop_url'] and ep['backdrop_url']:
                 grp['backdrop_url'] = ep['backdrop_url']

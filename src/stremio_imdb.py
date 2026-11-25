@@ -410,7 +410,7 @@ class StremioAddonManager:
                     'name': str(catalog.get('name') or catalog_id)[:120],
                     'source': str(source.get('name') or manifest.get('name') or 'Addon')[:80],
                     'genres': genres, 'genre_filter': 'genre' in extras,
-                    'search': 'search' in extras,
+                    'search': 'search' in extras, 'pagination': 'skip' in extras,
                     'required_filters': [name for name, extra in extras.items() if extra.get('isRequired')],
                 }
                 entries.append((public, url[:-len('/manifest.json')], catalog_id))
@@ -425,12 +425,16 @@ class StremioAddonManager:
     def discovery_catalogs(self):
         return [dict(entry[0]) for entry in self._catalog_entries()]
 
-    def discover_catalog(self, key, kind, genre='', search=''):
+    def discover_catalog(self, key, kind, genre='', search='', skip=0, with_page=False):
+        if not isinstance(skip, int) or skip < 0:
+            raise ValueError('Invalid catalog offset.')
         entry = next((entry for entry in self._catalog_entries() if entry[0]['key'] == key and entry[0]['kind'] == kind), None)
         if not entry:
             raise ValueError('Catalog unavailable. Reload Discover and select a catalog.')
         catalog, base, catalog_id = entry
         supplied = {'genre': str(genre or '').strip(), 'search': str(search or '').strip()}
+        if catalog['pagination'] and ('skip' in catalog['required_filters'] or skip):
+            supplied['skip'] = str(skip)
         for name in catalog['required_filters']:
             if not supplied.get(name):
                 raise ValueError(f'This catalog requires a {name} filter.')
@@ -438,11 +442,16 @@ class StremioAddonManager:
             raise ValueError('This genre is not available for the selected catalog.')
         if supplied['search'] and not catalog['search']:
             raise ValueError('This catalog does not support search. Select a searchable catalog or clear the search.')
+        if skip and not catalog['pagination']:
+            raise ValueError('This catalog does not support pagination.')
+        if skip:
+            supplied['skip'] = str(skip)
         extras = '&'.join(f'{name}={quote(value, safe="")}' for name, value in supplied.items() if value)
         endpoint = f'{base}/catalog/{quote(kind, safe="")}/{quote(catalog_id, safe="")}'
         data = _http_json(endpoint + ('/' + extras if extras else '') + '.json')
         items, seen = [], set()
-        for raw in data.get('metas', []):
+        raw_items = data.get('metas') or []
+        for raw in raw_items:
             if not isinstance(raw, dict):
                 continue
             item_id = str(raw.get('id') or raw.get('imdb_id') or '').strip()
@@ -460,8 +469,8 @@ class StremioAddonManager:
                 'genres': list(raw.get('genres') or [])[:3], 'playable': playable,
                 'stremio_url': f'stremio:///detail/{quote(item_kind, safe="")}/{quote(item_id, safe="")}',
             })
-            if len(items) >= 48:
-                break
+        if with_page:
+            return {'items': items, 'next_skip': skip + len(raw_items), 'has_more': catalog['pagination'] and bool(raw_items)}
         return items
 
     def _load(self):

@@ -66,6 +66,28 @@ class DiscoveryCatalogTests(unittest.TestCase):
         self.assertFalse(result[0]['playable'])
         self.assertEqual(result[0]['stremio_url'], 'stremio:///detail/anime/kitsu%3A123')
 
+    def test_pagination_keeps_full_provider_page_and_passes_skip(self):
+        self.manifest['catalogs'][0]['extra'].append({'name': 'skip', 'isRequired': True})
+        metas = [{'id': f'tt{1000000 + n}', 'type': 'movie', 'name': str(n)} for n in range(100)]
+        urls = []
+        def fetch(url, **kwargs):
+            if url.endswith('manifest.json'):
+                return self.fetch(url, **kwargs)
+            urls.append(url)
+            return {'metas': metas if 'skip=100' not in url else []}
+        with patch.object(self.manager, 'list_addons', return_value=[]), patch.object(imdb, '_http_json', side_effect=fetch):
+            catalog = self.manager.discovery_catalogs()[0]
+            self.assertTrue(catalog['pagination'])
+            page = self.manager.discover_catalog(catalog['key'], 'movie', genre='Drama', skip=0, with_page=True)
+            self.assertEqual(len(page['items']), 100)
+            self.assertEqual(page['next_skip'], 100)
+            self.assertTrue(page['has_more'])
+            last = self.manager.discover_catalog(catalog['key'], 'movie', genre='Drama', skip=100, with_page=True)
+            self.assertFalse(last['has_more'])
+            self.assertTrue(urls[-1].endswith('/genre=Drama&skip=100.json'))
+            with self.assertRaises(ValueError):
+                self.manager.discover_catalog(catalog['key'], 'movie', skip=-1)
+
     def test_invalid_and_required_filters_fail_clearly(self):
         with patch.object(self.manager, 'list_addons', return_value=[self.addon]), patch.object(imdb, '_http_json', side_effect=self.fetch):
             catalog = next(c for c in self.manager.discovery_catalogs() if c['kind'] == 'other')

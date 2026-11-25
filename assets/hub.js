@@ -4,8 +4,9 @@
     const t = key => (root.AppUI ? root.AppUI.translate(key) : key);
 
     let catalogData = { movies: [], series: [], continue_watching: [], featured: null, stats: {} };
-    let discoverState = { kind: 'movie', catalogKey: '', catalogs: null, genre: '', items: [], loading: false, error: '' };
+    let discoverState = { kind: 'movie', catalogKey: '', catalogs: null, genre: '', items: [], loading: false, error: '', nextSkip: 0, hasMore: false, query: '' };
     let discoverRequest = 0;
+    let discoverObserver = null;
     let localImdbSet = new Set();
     let currentView = 'catalog';
     let currentCatalogItemId = '';
@@ -39,6 +40,18 @@
             if (ch !== null && ch !== undefined) node.append(typeof ch === 'string' ? document.createTextNode(ch) : ch);
         }
         return node;
+    }
+
+    function carouselIcon(playing) {
+        const ns = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(ns, 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('width', '20'); svg.setAttribute('height', '20');
+        svg.setAttribute('aria-hidden', 'true');
+        const path = document.createElementNS(ns, 'path');
+        path.setAttribute('fill', 'currentColor');
+        path.setAttribute('d', playing ? 'M6 4h4v16H6zM14 4h4v16h-4z' : 'M7 4v16l13-8z');
+        svg.append(path); return svg;
     }
 
     function dotsIconSvg() {
@@ -96,6 +109,7 @@
 
     function setHubView(view) {
         currentView = view;
+        if (view !== 'discover') discoverObserver?.disconnect();
         document.body.dataset.view = view;
         if ($('catalogView')) $('catalogView').hidden = view !== 'catalog';
         if ($('discoverView')) $('discoverView').hidden = view !== 'discover';
@@ -109,7 +123,10 @@
         }
         if (view === 'settings') root.StreamSettings?.open();
         else if (view === 'catalog') saveCurrentProgress().finally(loadCatalog);
-        else if (view === 'discover' && (!discoverState.items.length || !discoverState.catalogs)) loadDiscover();
+        else if (view === 'discover') {
+            if (!discoverState.items.length || !discoverState.catalogs) loadDiscover();
+            else renderDiscover();
+        }
     }
     root.setHubView = setHubView;
 
@@ -233,20 +250,21 @@
                 ]),
             ]);
             const media = el('div', { className: 'hub-featured-media' });
-            const bg = f.backdrop_url || f.poster_url;
+            const bg = f.poster_url || f.backdrop_url;
             if (bg) media.append(el('img', { src: bg, alt: f.title || '' }));
             const changeHero = delta => { heroIndex = (heroIndex + delta + heroes.length) % heroes.length; renderCatalog(); };
             const controls = heroes.length > 1 ? el('div', {className: 'hero-controls'}, [
                 el('button', {type: 'button', 'aria-label': t('Previous feature'), text: '‹', onClick: () => changeHero(-1)}),
                 el('span', {className: 'notice', text: `${heroIndex + 1} / ${heroes.length}`}),
                 el('button', {type: 'button', 'aria-label': t('Next feature'), text: '›', onClick: () => changeHero(1)}),
-                el('button', {type: 'button', 'aria-label': t('Pause carousel'), 'aria-pressed': String(carouselPaused), text: carouselPaused ? '▶' : 'Ⅱ', onClick: () => { carouselPaused = !carouselPaused; renderCatalog(); }}),
+                el('button', {type: 'button', 'aria-label': t(carouselPaused ? 'Resume carousel' : 'Pause carousel'), 'aria-pressed': String(carouselPaused),  onClick: () => { carouselPaused = !carouselPaused; renderCatalog(); }}, [carouselIcon(!carouselPaused)]),
             ]) : null;
             const feature = el('section', { className: 'hub-featured' }, [info, media, controls]);
             children.push(feature);
             if (heroes.length > 1 && !carouselPaused && !root.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
                 const scheduleHero = () => { heroTimer = setTimeout(() => {
-                    if (currentView !== 'catalog' || document.hidden) return;
+                    if (currentView !== 'catalog') return;
+                    if (document.hidden) { scheduleHero(); return; }
                     if (feature.matches(':hover, :focus-within')) { scheduleHero(); return; }
                     heroIndex = (heroIndex + 1) % heroes.length;
                     renderCatalog();
@@ -356,6 +374,7 @@
     function renderDiscover() {
         const container = $('discoverView');
         if (!container) return;
+        discoverObserver?.disconnect();
         const selected = activeDiscoverCatalog();
         const options = discoverCatalogOptions();
         const field = (label, select) => el('label', { className: 'discover-filter' }, [
@@ -394,9 +413,9 @@
             field('Type', typeSelect), field('Catalog', catalogSelect), field(genreLabel, genreSelect),
         ]);
         let body;
-        if (discoverState.loading) {
+        if (discoverState.loading && !discoverState.items.length) {
             body = el('p', { className: 'notice', role: 'status', text: t('Loading IMDb & Stremio catalog…') });
-        } else if (discoverState.error) {
+        } else if (discoverState.error && !discoverState.items.length) {
             body = el('div', { className: 'discover-notice', role: 'status' }, [
                 el('p', { className: 'notice', text: discoverState.error }),
                 el('button', { type: 'button', className: 'btn btn-vlc', text: t('Retry'), onClick: () => loadDiscover() }),
@@ -417,11 +436,27 @@
                 },
             })));
         }
-        container.replaceChildren(filters, body);
+        const footer = el('div', {className: 'discover-pagination', role: 'status', 'aria-live': 'polite'});
+        if (discoverState.items.length && (discoverState.hasMore || discoverState.error)) {
+            if (discoverState.error) footer.append(el('p', {className:'notice', text: discoverState.error}));
+            const more = el('button', {type: 'button', className: 'btn btn-vlc', text: t(discoverState.loading ? 'Loading…' : discoverState.error ? 'Retry' : 'Load more'), onClick: () => loadDiscover(true)});
+            more.disabled = discoverState.loading;
+            footer.append(more);
+        }
+        container.replaceChildren(filters, body, footer);
+        if (currentView === 'discover' && discoverState.hasMore && !discoverState.loading && !discoverState.error && root.IntersectionObserver) {
+            discoverObserver = new root.IntersectionObserver(entries => {
+                if (entries.some(entry => entry.isIntersecting) && currentView === 'discover') loadDiscover(true);
+            }, {rootMargin: '800px'});
+            discoverObserver.observe(footer);
+        }
         container.setAttribute('aria-busy', String(discoverState.loading));
     }
 
-    async function loadDiscover() {
+    async function loadDiscover(append = false) {
+        append = append === true;
+        if (append && (discoverState.loading || !discoverState.hasMore)) return;
+        if (!append) { discoverState.items = []; discoverState.nextSkip = 0; discoverState.hasMore = false; }
         const request = ++discoverRequest;
         discoverState.loading = true;
         discoverState.error = '';
@@ -434,16 +469,25 @@
             }
             const selected = selectDiscoverCatalog();
             if (!selected) { discoverState.items = []; return; }
-            const q = ($('hubSearchInput')?.value || '').trim();
+            if (!append) discoverState.query = ($('hubSearchInput')?.value || '').trim();
+            const q = discoverState.query;
             const params = new URLSearchParams({ kind: selected.kind, catalog_key: selected.key });
+            if (append) params.set('skip', String(discoverState.nextSkip));
             if (q) params.set('q', q);
             if (discoverState.genre) params.set('genre', discoverState.genre);
             const data = await callApi('/api/discover?' + params);
             if (request !== discoverRequest) return;
-            discoverState.items = data.items || [];
+            const incoming = data.items || [];
+            const seen = new Set(discoverState.items.map(item => `${item.kind}:${item.id || item.imdb_id}`));
+            const fresh = incoming.filter(item => { const key = `${item.kind}:${item.id || item.imdb_id}`; if (seen.has(key)) return false; seen.add(key); return true; });
+            const offset = Number(data.next_skip);
+            const nextSkip = Number.isFinite(offset) ? offset : discoverState.nextSkip + incoming.length;
+            discoverState.hasMore = selected.pagination && data.has_more === true && nextSkip > discoverState.nextSkip && fresh.length > 0;
+            discoverState.nextSkip = nextSkip;
+            discoverState.items.push(...fresh);
         } catch (err) {
             if (request !== discoverRequest) return;
-            discoverState.items = [];
+            if (!append) discoverState.items = [];
             discoverState.error = err.message || t('Could not load catalogs. Try again.');
         } finally {
             if (request === discoverRequest) {

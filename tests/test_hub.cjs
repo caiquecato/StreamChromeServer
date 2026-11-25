@@ -5,7 +5,7 @@ const vm = require('node:vm');
 
 // A small DOM double with real attachment/focus semantics. Tests drive public
 // navigation and rendered controls; production private functions stay private.
-function harness() {
+function harness(options = {}) {
     let document;
     class Node {
         constructor(tag) {
@@ -90,7 +90,7 @@ function harness() {
         getPlaybackPosition: () => position, getMovieDuration: () => 10800,
         async api(url, body) {
             calls.push({url, body});
-            if (url === '/api/catalog') return {movies: [], series: [], continue_watching: []};
+            if (url === '/api/catalog') return options.home || {movies: [], series: [], continue_watching: []};
             if (url === '/api/library/downloads') return {jobs: []};
             if (url === '/api/discover/catalogs') return {catalogs: [{key: 'popular', kind: 'movie', name: 'Popular', source: 'Cinemeta', genres: [], genre_filter: false, search: true, required_filters: []}]};
             if (url.startsWith('/api/discover?')) return {items: [{kind: 'series', imdb_id: 'tt123', title: 'Test series'}]};
@@ -115,10 +115,11 @@ function harness() {
             root.dispatchEvent({type: 'streamchrome:media', detail: {source}});
         },
     };
+    const timers = new Map(); let timerId = 0;
     const context = vm.createContext({window: root, document, console, URLSearchParams,
-        setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {}});
+        setTimeout: fn => { timers.set(++timerId, fn); return timerId; }, clearTimeout: id => timers.delete(id), setInterval: () => 1, clearInterval() {}});
     vm.runInContext(fs.readFileSync(path.join(__dirname, '../assets/hub.js'), 'utf8'), context);
-    return {root, document, elements, calls, streamCounts, setPosition(value) { position = value; }};
+    return {root, document, elements, calls, streamCounts, timers, setPosition(value) { position = value; }};
 }
 
 async function settle() { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); }
@@ -191,7 +192,8 @@ async function progressFlow() {
     assert.equal(saves().length, previous, 'manual URL playback must not inherit the previous catalog movie');
 }
 
-(async () => {
+module.exports = {harness, settle};
+if (require.main === module) (async () => {
     await progressFlow();
     await seriesFlow();
     console.log('Hub integration: progress ownership, nested dialogs, stable focus, exact source refresh and partial retry verified.');

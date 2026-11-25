@@ -1095,3 +1095,30 @@ html[data-layout='glass'] .hub-stage .hub-section-head h2 { font-size: 23px; fon
 @media (max-width: 640px) {
     #discoverView .discover-filters { grid-template-columns: 1fr; gap: 14px; }
 }
+
+.hub-featured .hero-controls {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 10px 16px;
+    position: relative;
+    z-index: 3;
+}
+.hub-featured .hero-controls button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-main);
+    background: var(--field, var(--bg-surface));
+    cursor: pointer;
+}
+.hub-featured .hero-controls button:hover { background: var(--bg-card); }
+.hub-featured .hero-controls button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+#discoverView .discover-pagination { display: grid; justify-items: center; gap: 12px; padding-block: 24px; }

@@ -78,7 +78,7 @@ for _d in (DATA_DIR, SERVER_ROOT / 'Movies', SERVER_ROOT / 'Series'):
         pass
 SETTINGS_DAT = DATA_DIR / 'server_settings.dat'
 SUBTITLE_SETTINGS_DAT = DATA_DIR / 'subtitle_settings.dat'
-APP_VERSION = '1.1.0'
+APP_VERSION = '1.1.1'
 INTEGRATION = WindowsIntegration(APP_DIRECTORY, DATA_DIR, APP_DIRECTORY / 'app.ico')
 UPDATER = Updater(APP_DIRECTORY, DATA_DIR, APP_VERSION)
 
@@ -550,10 +550,10 @@ class StreamProHandler(BaseHTTPRequestHandler):
             elif parsed.path == '/api/discover':
                 d_kind = query.get('kind', ['movie'])[0]
                 key = query.get('catalog_key', [''])[0]
-                self.send_json({
-                    'items': ADDONS.discover_catalog(key, d_kind, query.get('genre', [''])[0], query.get('q', [''])[0]) if key else imdb_discover(d_kind, query.get('catalog', ['top'])[0], query.get('q', [''])[0], query.get('genre', [''])[0]),
-                    'genres': [] if key else imdb_genres(d_kind),
-                })
+                if key:
+                    self.send_json(ADDONS.discover_catalog(key, d_kind, query.get('genre', [''])[0], query.get('q', [''])[0], skip=int(query.get('skip', ['0'])[0]), with_page=True))
+                else:
+                    self.send_json({'items': imdb_discover(d_kind, query.get('catalog', ['top'])[0], query.get('q', [''])[0], query.get('genre', [''])[0]), 'genres': imdb_genres(d_kind), 'has_more': False})
             elif parsed.path == '/api/imdb/meta':
                 kind = query.get('kind', ['movie'])[0]
                 imdb_id = query.get('id', [''])[0]

@@ -5,6 +5,8 @@
     'use strict';
     // English is canonical. Exact fragments intentionally retain their spaces.
     const entries = [
+        ["Resume carousel", "Retomar carrossel", "Reanudar carrusel"],
+        ["Load more", "Carregar mais", "Cargar más"],
         ["All years", "Todos os anos", "Todos los años"],
         ["Settings", "Configurações", "Configuración"],
         ["Settings sections", "Seções de configurações", "Secciones de configuración"],

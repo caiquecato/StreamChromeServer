@@ -27,5 +27,22 @@ class ResumeTests(unittest.TestCase):
             self.assertEqual(len(home['hero_items']), 3)
             self.assertEqual(sum(i['kind'] == 'series' for i in home['hero_items']), 1)
 
+    def test_series_frame_cache_does_not_block_official_metadata_poster(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / 'Series' / 'Show'
+            folder.mkdir(parents=True)
+            (folder / 'Show.S01E01.mkv').write_bytes(b'test')
+            cat = CatalogService(root, root / 'data', enable_online_metadata=False)
+            with patch.object(cat, '_probe_video', return_value={}), patch.object(cat, '_extract_still', return_value='thumb_frame.jpg'):
+                cat.scan(async_enrich=False)
+                cat._enrich_worker()
+            (folder / 'Show.S01E02.mkv').write_bytes(b'test')
+            with patch.object(cat, '_probe_video', return_value={}), patch.object(cat, '_extract_still', return_value='thumb_frame.jpg'), patch.object(cat, '_fetch_online_meta', return_value={'poster_file':'official.jpg', 'imdb_id':'tt1234567'}):
+                cat.scan(async_enrich=False)
+                cat._enrich_worker()
+            posters = [i['poster_url'] for i in cat.get_home_catalog()['hero_items']]
+            self.assertIn('/api/poster/official.jpg', posters)
+
 
 if __name__ == '__main__': unittest.main()
