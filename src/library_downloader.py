@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import http.client
 from pathlib import Path
+import queue
 import re
 import secrets
 import socket
@@ -12,14 +13,17 @@ import urllib.error
 from urllib.parse import unquote, urlparse
 import urllib.request
 
-from stremio_imdb import USER_AGENT, get_addon_stream, urlopen_resilient
+from stremio_imdb import get_addon_stream, urlopen_resilient
 
 VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.m4v', '.webm', '.ts', '.m2ts', '.mpg', '.mpeg', '.wmv'}
 _INVALID_WIN_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _RESERVED_WIN_NAMES = {'CON', 'PRN', 'AUX', 'NUL', *(f'COM{i}' for i in range(1, 10)), *(f'LPT{i}' for i in range(1, 10))}
 _SEASON_EP_RE = re.compile(r'(?:S\d{1,2}E\d{1,3}|\b\d{1,2}x\d{1,3}\b)', re.I)
 CHUNK_BYTES = 256 * 1024
+DISK_BUFFER_BYTES = 4 * 1024 * 1024
+QUEUE_CHUNKS = 48
 MAX_STALL_RETRIES = 15
+DOWNLOAD_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 
 
 def _safe_win_name(text, fallback='Video', max_len=110):
@@ -207,7 +211,7 @@ class LibraryDownloadService:
                 if job['total'] > 0 and resume_from >= job['total']:
                     break
 
-                req_headers = {'User-Agent': USER_AGENT, **job['headers']}
+                req_headers = {'User-Agent': DOWNLOAD_USER_AGENT, **job['headers']}
                 if resume_from > 0:
                     req_headers['Range'] = f'bytes={resume_from}-'
                 req = urllib.request.Request(job['url'], headers=req_headers)
@@ -235,12 +239,37 @@ class LibraryDownloadService:
 
                         win_start = time.monotonic()
                         win_bytes = 0
-                        with part.open('ab' if append_mode else 'wb') as out:
+                        write_q = queue.Queue(maxsize=QUEUE_CHUNKS)
+                        write_err = []
+
+                        def _disk_writer():
+                            try:
+                                with part.open('ab' if append_mode else 'wb', buffering=DISK_BUFFER_BYTES) as out:
+                                    while True:
+                                        item = write_q.get()
+                                        if item is None:
+                                            break
+                                        out.write(item)
+                            except OSError as exc:
+                                write_err.append(exc)
+
+                        writer = threading.Thread(target=_disk_writer, daemon=True)
+                        writer.start()
+                        try:
                             while not cancel_ev.is_set():
+                                if write_err:
+                                    raise write_err[0]
                                 chunk = resp.read(CHUNK_BYTES)
                                 if not chunk:
                                     break
-                                out.write(chunk)
+                                while not cancel_ev.is_set():
+                                    if write_err:
+                                        raise write_err[0]
+                                    try:
+                                        write_q.put(chunk, timeout=0.5)
+                                        break
+                                    except queue.Full:
+                                        continue
                                 n = len(chunk)
                                 progressed_bytes += n
                                 win_bytes += n
@@ -260,6 +289,19 @@ class LibraryDownloadService:
                                         job['total'] = total
                                     job['speed'] = speed
                                     job['eta'] = eta
+                        finally:
+                            while True:
+                                try:
+                                    write_q.put(None, timeout=0.2)
+                                    break
+                                except queue.Full:
+                                    try:
+                                        write_q.get_nowait()
+                                    except queue.Empty:
+                                        pass
+                            writer.join(timeout=15)
+                        if write_err:
+                            raise write_err[0]
 
                         if cancel_ev.is_set():
                             break
