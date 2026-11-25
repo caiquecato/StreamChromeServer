@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import secrets
 import socket
+import ssl
 import threading
 import time
 import urllib.error
@@ -37,6 +38,18 @@ def _parse_total_from_headers(headers, status, appended_offset):
     if str(cl).isdigit():
         return int(cl) + (appended_offset if status == 206 else 0)
     return 0
+
+
+def _open_media_stream(req, timeout=30):
+    try:
+        return urlopen_resilient(req, timeout=timeout)
+    except urllib.error.URLError as err:
+        # Some Debrid CDN storage nodes serve expired chain timestamps; keep CA + hostname checks strict.
+        if isinstance(err.reason, ssl.SSLCertVerificationError) and getattr(err.reason, 'verify_code', None) == 10:
+            ctx = ssl.create_default_context()
+            ctx.verify_flags |= getattr(ssl, 'X509_V_FLAG_NO_CHECK_TIME', 0x200000)
+            return urllib.request.urlopen(req, timeout=timeout, context=ctx)
+        raise
 
 
 class LibraryDownloadService:
@@ -191,7 +204,7 @@ class LibraryDownloadService:
                 job['state'] = 'downloading'
                 job['error'] = ''
 
-            with urlopen_resilient(req, timeout=30) as resp:
+            with _open_media_stream(req, timeout=30) as resp:
                 # Interrupt the socket, not BufferedReader.close(), which waits on its read lock.
                 active_socket = getattr(getattr(getattr(resp, 'fp', None), 'raw', None), '_sock', None)
                 with self._lock:

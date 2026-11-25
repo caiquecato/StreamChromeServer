@@ -78,7 +78,7 @@ for _d in (DATA_DIR, SERVER_ROOT / 'Movies', SERVER_ROOT / 'Series'):
         pass
 SETTINGS_DAT = DATA_DIR / 'server_settings.dat'
 SUBTITLE_SETTINGS_DAT = DATA_DIR / 'subtitle_settings.dat'
-APP_VERSION = '1.1.1'
+APP_VERSION = '1.1.2'
 INTEGRATION = WindowsIntegration(APP_DIRECTORY, DATA_DIR, APP_DIRECTORY / 'app.ico')
 UPDATER = Updater(APP_DIRECTORY, DATA_DIR, APP_VERSION)
 
