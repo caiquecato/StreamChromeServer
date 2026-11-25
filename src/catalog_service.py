@@ -84,7 +84,7 @@ def _format_size_bytes(size_bytes):
 class CatalogService:
     def __init__(self, server_root, data_dir, ffmpeg_bin='ffmpeg', ffprobe_bin='ffprobe', enable_online_metadata=True):
         self.server_root = Path(server_root).resolve()
-        self.movies_dir = self.server_root / 'Filmes'
+        self.movies_dir = self.server_root / 'Movies'
         self.series_dir = self.server_root / 'Series'
         self.data_dir = Path(data_dir).resolve()
         self.posters_dir = self.data_dir / 'posters'
@@ -210,7 +210,7 @@ class CatalogService:
         self.series_dir.mkdir(parents=True, exist_ok=True)
         discovered = []
         seen_paths = set()
-        for base, kind in ((self.movies_dir, 'movie'), (self.series_dir, 'episode')):
+        for base, kind in ((self.movies_dir, 'movie'), (self.server_root / 'Filmes', 'movie'), (self.series_dir, 'episode')):
             if not base.is_dir():
                 continue
             for path in base.rglob('*'):
@@ -663,7 +663,7 @@ class CatalogService:
 
         return {
             'media_root': str(self.server_root),
-            'library_paths': {'movies': str(self.server_root / 'Filmes'), 'series': str(self.server_root / 'Series')},
+            'library_paths': {'movies': str(self.movies_dir), 'series': str(self.series_dir)},
             'featured': featured,
             'hero_items': movies + [{**show, 'kind': 'series', 'id': show['first_episode_id']} for show in series_list],
             'continue_watching': continue_watching,

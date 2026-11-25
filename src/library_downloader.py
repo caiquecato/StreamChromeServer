@@ -40,7 +40,7 @@ def _parse_total_from_headers(headers, status, appended_offset):
 
 
 class LibraryDownloadService:
-    """Downloads direct HTTPS/Debrid streams straight into D:\\StreamServer\\Filmes or Series."""
+    """Downloads direct HTTPS/Debrid streams straight into the Movies or Series library folder."""
 
     def __init__(self, server_root, on_complete=None, max_workers=2):
         self.server_root = Path(server_root).resolve()
@@ -76,7 +76,7 @@ class LibraryDownloadService:
             subtitle = f'S{s_num:02d}E{e_num:02d}'
         else:
             folder_name = f'{safe_title} ({year_str})' if year_str else safe_title
-            folder = self.server_root / 'Filmes' / _safe_win_name(folder_name, fallback=safe_title, max_len=100)
+            folder = self.server_root / 'Movies' / _safe_win_name(folder_name, fallback=safe_title, max_len=100)
             stem = _safe_win_name(raw_stem, fallback=folder_name, max_len=130)
             subtitle = year_str or 'Movie'
 

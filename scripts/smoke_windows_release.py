@@ -81,8 +81,13 @@ def smoke_mode(installer, mode, root):
     if mode == 'portable':
         assert not (destination / 'unins000.exe').exists(), 'Portable mode created an uninstaller'
         assert not uninstall_entry_exists(), 'Portable mode registered an uninstaller'
-        assert (destination / 'Filmes').is_dir() and (destination / 'Series').is_dir()
+        assert (destination / 'Movies').is_dir() and (destination / 'Series').is_dir()
+        assert not (destination / 'Filmes').exists(), 'New installs must use English library folders'
         expected_data = destination / 'app/data'
+        test_env = os.environ.copy()
+        test_env['LOCALAPPDATA'] = str(root / 'profile')
+        subprocess.run([str(exe), '--configure-integration', '{"drive_icon":false}'], env=test_env,
+                       check=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
     else:
         assert (destination / 'unins000.exe').is_file()
         assert uninstall_entry_exists()
@@ -93,7 +98,8 @@ def smoke_mode(installer, mode, root):
     env = os.environ.copy()
     env['LOCALAPPDATA'] = str(root / 'profile')
     port = available_port()
-    app = subprocess.Popen([str(exe), '--local-only', '--no-browser', '--port', str(port)], env=env,
+    jellyfin_port = available_port()
+    app = subprocess.Popen([str(exe), '--local-only', '--no-browser', '--port', str(port), '--jellyfin-port', str(jellyfin_port)], env=env,
                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                            creationflags=subprocess.CREATE_NO_WINDOW)
     try:
@@ -111,7 +117,7 @@ def smoke_mode(installer, mode, root):
             time.sleep(0.25)
         while True:
             try:
-                with urllib.request.urlopen('http://127.0.0.1:8096/health', timeout=2) as response:
+                with urllib.request.urlopen(f'http://127.0.0.1:{jellyfin_port}/health', timeout=2) as response:
                     if response.read() == b'Healthy':
                         break
             except (OSError, urllib.error.URLError):
@@ -124,12 +130,17 @@ def smoke_mode(installer, mode, root):
         credentials = expected_data / 'subtitle_settings.dat'
         assert credentials.is_file(), 'Credentials escaped the selected data directory'
         assert b'fixture-key-not-real' not in credentials.read_bytes(), 'Credentials stored in plaintext'
+        application_settings = json.loads(request(port, '/api/app-settings'))
+        assert application_settings['paths']['movies'].endswith('Movies')
+        assert not application_settings['integration']['autorun']
+        update = json.loads(request(port, '/api/updates/check', {}))
+        assert update['supported'] and update['current_version'] == status['version']
         print('RUNNING', mode, status['version'], 'GUI subsystem, FFmpeg, FFprobe, Jellyfin and encrypted settings OK', flush=True)
         request(port, '/api/shutdown', {})
         app.wait(timeout=9)
         assert app.returncode == 0
         try:
-            urllib.request.urlopen('http://127.0.0.1:8096/health', timeout=1)
+            urllib.request.urlopen(f'http://127.0.0.1:{jellyfin_port}/health', timeout=1)
         except (OSError, urllib.error.URLError):
             pass
         else:
@@ -163,11 +174,6 @@ def main():
         parser.error('Existing installed StreamChrome Server detected; refusing to modify it')
     shortcut = Path(os.environ['APPDATA']) / 'Microsoft/Windows/Start Menu/Programs/StreamChrome Server.lnk'
     previous_shortcut = shortcut.read_bytes() if shortcut.exists() else None
-    with socket.socket() as probe:
-        try:
-            probe.bind(('127.0.0.1', 8096))
-        except OSError:
-            parser.error('Port 8096 is already in use; refusing to interfere with an existing service')
     SCRATCH.mkdir(exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix='install-smoke-', dir=SCRATCH)).resolve()
     assert root.is_relative_to(SCRATCH.resolve()) and root.drive.upper() == 'C:'

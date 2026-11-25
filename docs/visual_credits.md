@@ -1,6 +1,6 @@
 # Demonstration artwork credits
 
-The images below are used in the fictional library shown in README Figures 1–13. Orbit, The Ridge, Tides, and After Hours are demonstration titles. These images are not official movie posters, and the screenshots do not depict a supplied media collection. The Earth image was originally collected under the working title Nightfall and appears as After Hours in the current screenshots.
+The images below are used in the fictional library shown in README Figures 1–17. Orbit, The Ridge, Tides, and After Hours are demonstration titles. These images are not official movie posters, and the screenshots do not depict a supplied media collection. The Earth image was originally collected under the working title Nightfall and appears as After Hours in the current screenshots.
 
 The cover, `figures/figura_01_capa.svg`, is an original SVG composition containing a screenshot of the application. Its embedded artwork carries the same credits as the screenshots.
 

@@ -20,7 +20,16 @@ from urllib.parse import urlparse, parse_qs, unquote
 import webbrowser
 import urllib.request
 
+if __name__ == '__main__' and '--watch-portable' in sys.argv:
+    from windows_integration import run_portable_watcher
+    raise SystemExit(run_portable_watcher())
+if __name__ == '__main__' and '--apply-update' in sys.argv:
+    from app_updates import run_update_helper
+    raise SystemExit(run_update_helper(sys.argv[sys.argv.index('--apply-update') + 1]))
+
 from process_guard import attach_to_server, run_managed
+from windows_integration import WindowsIntegration
+from app_updates import Updater
 from downloads import DownloadService
 from subtitles import SubtitleService, ProviderError, load_settings, http_json, http_bytes, to_vtt, guess_search
 from catalog_service import CatalogService
@@ -62,13 +71,16 @@ def _resolve_layout(exe_dir):
 
 
 SERVER_ROOT, ENGINE_DIR, DATA_DIR = _resolve_layout(APP_DIRECTORY)
-for _d in (DATA_DIR, SERVER_ROOT / 'Filmes', SERVER_ROOT / 'Series'):
+for _d in (DATA_DIR, SERVER_ROOT / 'Movies', SERVER_ROOT / 'Series'):
     try:
         _d.mkdir(parents=True, exist_ok=True)
     except OSError:
         pass
 SETTINGS_DAT = DATA_DIR / 'server_settings.dat'
 SUBTITLE_SETTINGS_DAT = DATA_DIR / 'subtitle_settings.dat'
+APP_VERSION = '1.1.0'
+INTEGRATION = WindowsIntegration(APP_DIRECTORY, DATA_DIR, APP_DIRECTORY / 'app.ico')
+UPDATER = Updater(APP_DIRECTORY, DATA_DIR, APP_VERSION)
 
 def find_media_tool(name):
     for candidate in (
@@ -86,7 +98,7 @@ FFPROBE_BIN = find_media_tool('ffprobe')
 _YTDLP_EXE = ENGINE_DIR / 'yt-dlp' / 'yt-dlp.exe'
 if not _YTDLP_EXE.is_file():
     _YTDLP_EXE = APP_DIRECTORY / 'yt-dlp' / 'yt-dlp.exe' if getattr(sys, 'frozen', False) else APP_DIRECTORY / 'installer' / 'yt-dlp' / 'yt-dlp.exe'
-_DEFAULT_DEST = (SERVER_ROOT / 'Filmes') if (SERVER_ROOT / 'Filmes').is_dir() else None
+_DEFAULT_DEST = SERVER_ROOT / 'Movies'
 DOWNLOADS = DownloadService(_YTDLP_EXE, FFMPEG_BIN, destination=_DEFAULT_DEST)
 CATALOG = CatalogService(SERVER_ROOT, DATA_DIR, FFMPEG_BIN, FFPROBE_BIN)
 REMOTE = RemoteAccessService(SETTINGS_DAT, ENGINE_DIR / 'cloudflared' / 'cloudflared.exe', hub_port=PORT, jellyfin_port=8096)
@@ -431,7 +443,7 @@ def register_local_video(path_obj, imdb_video_id=''):
 
 
 def open_media_folder(folder_key):
-    target = SERVER_ROOT / ('Series' if folder_key == 'series' else 'Filmes')
+    target = SERVER_ROOT / ('Series' if folder_key == 'series' else 'Movies')
     target.mkdir(parents=True, exist_ok=True)
     if os.name == 'nt':
         os.startfile(str(target))
@@ -513,7 +525,7 @@ class StreamProHandler(BaseHTTPRequestHandler):
         try:
             if parsed.path in ('/', '/index.html'):
                 self.serve_asset()
-            elif parsed.path in ('/player_helpers.js', '/player.css', '/layouts.css', '/appearance.js', '/i18n.js', '/presentation.js', '/downloads.js', '/hub.css', '/hub.js', '/series.css', '/season_queue.js', '/qrcode.js', '/manifest.webmanifest'):
+            elif parsed.path in ('/player_helpers.js', '/player.css', '/layouts.css', '/appearance.js', '/i18n.js', '/presentation.js', '/downloads.js', '/hub.css', '/hub.js', '/series.css', '/season_queue.js', '/settings.js', '/settings.css', '/qrcode.js', '/manifest.webmanifest'):
                 self.serve_asset(parsed.path[1:])
             elif parsed.path.startswith('/api/poster/'):
                 poster_file = unquote(parsed.path[len('/api/poster/'):])
@@ -533,11 +545,14 @@ class StreamProHandler(BaseHTTPRequestHandler):
             elif parsed.path == '/api/catalog/subtitle':
                 sub_path = CATALOG.resolve_sidecar_path(query.get('id', [''])[0])
                 self.send_bytes(to_vtt(sub_path.read_bytes()).encode('utf-8'), 'text/vtt; charset=utf-8')
+            elif parsed.path == '/api/discover/catalogs':
+                self.send_json({'catalogs': ADDONS.discovery_catalogs()})
             elif parsed.path == '/api/discover':
                 d_kind = query.get('kind', ['movie'])[0]
+                key = query.get('catalog_key', [''])[0]
                 self.send_json({
-                    'items': imdb_discover(d_kind, query.get('catalog', ['top'])[0], query.get('q', [''])[0], query.get('genre', [''])[0]),
-                    'genres': imdb_genres(d_kind),
+                    'items': ADDONS.discover_catalog(key, d_kind, query.get('genre', [''])[0], query.get('q', [''])[0]) if key else imdb_discover(d_kind, query.get('catalog', ['top'])[0], query.get('q', [''])[0], query.get('genre', [''])[0]),
+                    'genres': [] if key else imdb_genres(d_kind),
                 })
             elif parsed.path == '/api/imdb/meta':
                 kind = query.get('kind', ['movie'])[0]
@@ -582,10 +597,16 @@ class StreamProHandler(BaseHTTPRequestHandler):
                     _SCANNED_DONE_JOBS.add(status['id'])
                     threading.Thread(target=lambda: (CATALOG.scan(), JELLYFIN.refresh_library()), daemon=True).start()
                 self.send_json(status)
+            elif parsed.path == '/api/app-settings':
+                if not self.is_host_client():
+                    self.send_json({'error': 'Available only on the host PC.'}, 403)
+                    return
+                self.send_json({'version': APP_VERSION, 'integration': INTEGRATION.status(), 'paths': {
+                    'movies': str(SERVER_ROOT / 'Movies'), 'series': str(SERVER_ROOT / 'Series'), 'data': str(DATA_DIR)}})
             elif parsed.path == '/api/settings':
                 self.send_json(SUBTITLES.status())
             elif parsed.path == '/api/status':
-                self.send_json({'version': '1.0.0', 'ffmpeg': bool(shutil.which(FFMPEG_BIN) or Path(FFMPEG_BIN).is_file()), 'ffprobe': bool(shutil.which(FFPROBE_BIN) or Path(FFPROBE_BIN).is_file()), 'lan': bool(getattr(self.server, 'lan_mode', False))})
+                self.send_json({'version': APP_VERSION, 'ffmpeg': bool(shutil.which(FFMPEG_BIN) or Path(FFMPEG_BIN).is_file()), 'ffprobe': bool(shutil.which(FFPROBE_BIN) or Path(FFPROBE_BIN).is_file()), 'lan': bool(getattr(self.server, 'lan_mode', False))})
             elif parsed.path == '/api/inspect':
                 raw = query.get('url', [''])[0]
                 addon_info = get_addon_stream(raw) if raw.startswith('addon:') else None
@@ -649,14 +670,21 @@ class StreamProHandler(BaseHTTPRequestHandler):
                 raise ValueError('Invalid data.')
             host_only_routes = {
                 '/api/local/open', '/api/download/folder', '/api/vlc', '/api/shutdown',
-                '/api/settings', '/api/stremio/addons',
+                '/api/settings', '/api/stremio/addons', '/api/app-settings', '/api/updates/check', '/api/updates/apply',
                 '/api/system/open-folder', '/api/system/autostart', '/api/system/firewall',
                 '/api/remote/pin', '/api/remote/toggle', '/api/jellyfin/password',
             }
             if path in host_only_routes and not self.is_host_client():
                 self.send_json({'error': 'Available only on the host PC.'}, 403)
                 return
-            if path == '/api/remote/auth':
+            if path == '/api/app-settings':
+                self.send_json(INTEGRATION.configure(data))
+            elif path == '/api/updates/check':
+                self.send_json(UPDATER.check())
+            elif path == '/api/updates/apply':
+                self.send_json(UPDATER.apply())
+                threading.Thread(target=request_shutdown, args=(self.server,), daemon=True).start()
+            elif path == '/api/remote/auth':
                 token = REMOTE.verify_pin(data.get('pin'), self.client_address[0])
                 secure_flag = '; Secure' if self.headers.get('X-Forwarded-Proto') == 'https' else ''
                 self.send_json({'ok': True}, extra_headers={'Set-Cookie': f'sc_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=1209600{secure_flag}'})
@@ -722,7 +750,7 @@ class StreamProHandler(BaseHTTPRequestHandler):
                 category = str(data.get('category', '')).strip()
                 if category not in ('movies', 'series'):
                     raise ValueError('Invalid library category.')
-                target_dir = (SERVER_ROOT / ('Series' if category == 'series' else 'Filmes')).resolve()
+                target_dir = (SERVER_ROOT / ('Series' if category == 'series' else 'Movies')).resolve()
                 target_dir.mkdir(parents=True, exist_ok=True)
                 with DOWNLOADS.lock:
                     DOWNLOADS.destination = target_dir
@@ -983,7 +1011,31 @@ def main():
     parser.add_argument('--no-browser', action='store_true')
     parser.add_argument('--background', action='store_true')
     parser.add_argument('--local-only', action='store_true')
+    parser.add_argument('--jellyfin-port', type=int, default=8096)
+    parser.add_argument('--refresh-integration', action='store_true')
+    parser.add_argument('--configure-integration')
     args = parser.parse_args()
+    if not 1 <= args.jellyfin_port <= 65535:
+        parser.error('Jellyfin port must be between 1 and 65535.')
+    JELLYFIN.port = args.jellyfin_port
+    REMOTE.jellyfin_port = args.jellyfin_port
+    if args.configure_integration:
+        try:
+            INTEGRATION.configure(json.loads(args.configure_integration))
+            return 0
+        except (ValueError, OSError) as error:
+            print(str(error))
+            return 1
+    if args.refresh_integration and INTEGRATION.status()['autorun']:
+        try:
+            INTEGRATION.configure({'autorun': True})
+        except (ValueError, OSError):
+            pass
+    else:
+        try:
+            INTEGRATION.refresh_registration()
+        except (ValueError, OSError):
+            pass
     lan_mode = not args.local_only
     bind_host = HOST if args.local_only else '0.0.0.0'
     try:

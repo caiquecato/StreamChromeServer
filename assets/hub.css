@@ -1055,3 +1055,43 @@ html[data-layout='glass'] .hub-stage .hub-section-head h2 { font-size: 23px; fon
     .hub-stage .hub-empty-card { padding: 20px; }
     .hub-stage .hub-empty-paths { overflow-wrap: anywhere; }
 }
+
+/* Discovery selectors inherit the active appearance palette. */
+#discoverView .discover-filters {
+    display: grid;
+    grid-template-columns: minmax(140px, 1fr) minmax(180px, 1.4fr) minmax(140px, 1fr);
+    gap: 18px;
+    margin-bottom: 28px;
+}
+#discoverView .discover-filter {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    min-width: 0;
+    color: var(--text-main);
+    font-size: 0.875rem;
+}
+#discoverView .discover-filter select {
+    width: 100%;
+    min-height: 48px;
+    padding: 10px 36px 10px 18px;
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    background-color: var(--field, var(--bg-surface));
+    color: var(--text-main);
+    font: inherit;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+#discoverView .discover-filter select:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 3px;
+}
+#discoverView .discover-filter select:disabled {
+    opacity: 0.65;
+    cursor: default;
+}
+#discoverView .discover-notice { padding-block: 12px; }
+@media (max-width: 640px) {
+    #discoverView .discover-filters { grid-template-columns: 1fr; gap: 14px; }
+}

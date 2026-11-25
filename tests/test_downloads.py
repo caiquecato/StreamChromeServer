@@ -35,12 +35,17 @@ class DownloadTests(unittest.TestCase):
    service.cancel('x');stop.assert_called_once_with(job['process'])
   self.assertTrue(job['cancel'])
  def test_movie_and_series_library_folders_include_year(self):
-  service=DownloadService('tool','ffmpeg',destination=Path('D:/StreamServer/Filmes'))
-  m_folder,m_tpl=service.build_target_folder_and_template({'title':'Paprika (2006)','destination':Path('D:/StreamServer/Filmes'),'info':{'title':'Paprika','release_year':2006}})
-  self.assertEqual(m_folder,Path('D:/StreamServer/Filmes/Paprika (2006)'))
-  self.assertEqual(m_tpl,'Paprika (2006).%(ext)s')
-  s_folder,s_tpl=service.build_target_folder_and_template({'title':'Severance S01E02 (2022)','destination':Path('D:/StreamServer/Filmes'),'info':{'title':'Severance','series':'Severance','release_year':2022,'season_number':1,'episode_number':2}})
-  self.assertEqual(s_folder,Path('D:/StreamServer/Series/Severance (2022)/Season 01'))
-  self.assertEqual(s_tpl,'Severance - S01E02.%(ext)s')
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp)
+   for category in ('Movies','Filmes'):
+    with self.subTest(category=category):
+     destination=root/category
+     service=DownloadService('tool','ffmpeg',destination=destination)
+     m_folder,m_tpl=service.build_target_folder_and_template({'title':'Paprika (2006)','info':{'title':'Paprika','release_year':2006}})
+     self.assertEqual(m_folder,root/'Movies'/'Paprika (2006)')
+     self.assertEqual(m_tpl,'Paprika (2006).%(ext)s')
+     s_folder,s_tpl=service.build_target_folder_and_template({'title':'Severance S01E02 (2022)','info':{'title':'Severance','series':'Severance','release_year':2022,'season_number':1,'episode_number':2}})
+     self.assertEqual(s_folder,root/'Series'/'Severance (2022)'/'Season 01')
+     self.assertEqual(s_tpl,'Severance - S01E02.%(ext)s')
 
 if __name__=='__main__':unittest.main()

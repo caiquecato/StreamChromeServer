@@ -17,21 +17,21 @@ Choose an installation mode in the wizard:
 | Mode | Application and data |
 | --- | --- |
 | Standard | Installs under `%LOCALAPPDATA%\Programs\StreamChromeServer`, with a Start menu shortcut and uninstaller. Settings and runtime data use `%LOCALAPPDATA%\StreamChromeServer`; the default media library is `%USERPROFILE%\Videos\StreamChromeServer`. |
-| Portable | Installs into a folder you choose on an HD or USB drive. Engines and data stay in `app/`, with `Filmes/` and `Series/` beside the executable. No shortcuts or uninstall registration are created. Internet access is still required during installation. |
+| Portable | Installs into a folder you choose on an HD or USB drive. Engines and data stay in `app/`, with `Movies/` and `Series/` beside the executable. No shortcuts or uninstall registration are created. Portable auto-launch is an optional, unchecked installation task. Internet access is still required during installation. |
 
 The public release uses this online installer for both modes. Close the application before updating it, then keep the same mode and destination. Standard uninstallation preserves profile data and the media library.
 
 ## Start watching
 
 1. Launch **StreamChrome Server** and open the hub at [localhost:8780](http://localhost:8780).
-2. Add your media under the library's `Filmes/` or `Series/` folders, then select **Scan library** in **Local**.
+2. Add your media under the library's `Movies/` or `Series/` folders, then select **Scan library** in **Local**.
 3. Open a title to play it or inspect its details. For a series, open **Episodes** and choose an episode.
-4. Use **Discover** to browse catalogs or search by title or IMDb ID. Open **Addons** to add an HTTPS Stremio `manifest.json` URL.
+4. Use **Discover** to browse catalogs or search by title or IMDb ID. Open **Settings > Sources and subtitles > Manage addons** to add an HTTPS Stremio `manifest.json` URL.
 
 Example library structure:
 
 ```text
-Filmes/
+Movies/
   Movie Title (2026)/
     Movie Title (2026).mkv
 Series/
@@ -40,7 +40,7 @@ Series/
       Show Title S01E01.mkv
 ```
 
-The interface supports English, Portuguese, and Spanish. Open **Appearance** to change the language, light/dark theme, or layout.
+The interface supports English, Portuguese, and Spanish. Open **Settings > Appearance** to change the language, light/dark theme, or layout. Existing `Filmes/` folders remain part of catalog scans; they are not renamed or moved. New movie downloads use `Movies/`.
 
 ## Six browsing layouts
 
@@ -65,7 +65,11 @@ The featured title carousel has previous, next, and pause controls. Watch progre
 
 ## Discover and episode sources
 
-Discover includes trending and top IMDb catalogs for movies and series, plus genre filters. Figure 8 shows a series catalog filtered by genre.
+Discover has three selectors: **Type**, **Catalog**, and **Genre**. Catalogs and their filters are read from Cinemeta and configured addon manifests. A year-based catalog labels its third selector **Year**. Provider-specific catalogs appear only when an installed addon actually declares them; configuring a stream addon alone does not create a provider catalog.
+
+Figure 17 shows the current selectors. Figure 8 records the genre-filtered series view from version 1.0.0.
+
+![Figure 17: Type, Catalog, and Genre discovery selectors](docs/figures/figura_17_discovery.jpg)
 
 ![Figure 8: Discover series by genre](docs/figures/figura_08_descobrir_generos.jpg)
 
@@ -99,9 +103,28 @@ The download queue supports direct HTTPS sources and yt-dlp links. Direct downlo
 
 Open **TV & Remote** for LAN addresses, QR codes, the M3U playlist, and Jellyfin access. The hub uses port `8780`; Jellyfin uses port `8096`. A Windows Firewall helper is available for private-network access.
 
-Optional Cloudflare Tunnel access provides an HTTPS address with a server PIN. Use the system tray controls or the hub's **Exit** button to stop the server and Jellyfin. Installation does not enable automatic startup.
+Optional Cloudflare Tunnel access provides an HTTPS address with a server PIN. Use the system tray controls or the hub's **Exit** button to stop the server and Jellyfin. The themed Exit dialog asks for confirmation before stopping playback and active downloads (Figure 16).
 
-## Settings and credentials
+![Figure 16: Exit confirmation](docs/figures/figura_16_exit.jpg)
+
+## Settings, Windows integration, and updates
+
+**Settings** brings appearance, library paths and scanning, subtitle credentials, addon management, Windows integration, and updates into one page. Figure 14 shows its appearance and library sections; Figure 15 shows the themed addon form.
+
+![Figure 14: Settings page](docs/figures/figura_14_settings.jpg)
+
+![Figure 15: Addon management](docs/figures/figura_15_addons.jpg)
+
+Portable installations offer two separate options, both off by default:
+
+- **Open when this drive is connected** installs a local watcher for this PC and Windows account. It adds that watcher to the current user's Windows startup entry and launches only the registered portable executable when its drive is detected. Enable it on each PC where you want this behavior, either in the installer or in **Settings > Windows integration**. It does not make Windows run an arbitrary USB executable automatically on other computers.
+- **Use StreamChrome drive icon** changes only the drive icon entry in its root `autorun.inf`. Existing unrelated entries are preserved; an existing icon or unsupported file encoding is left intact with an error. No drive is formatted. Disable the option to restore the prior file, provided it has not since been edited elsewhere.
+
+Version 1.0.0 has no built-in updater. To move from 1.0.0 to 1.1.0, run the new installer once using the same mode and destination. Later application updates can be installed from **Settings > Updates** in the packaged desktop application.
+
+The updater checks the latest stable release in this GitHub repository, downloads `StreamChromeServer-<version>-app.zip`, and verifies its SHA-256 against GitHub's release asset digest. It accepts only a package containing `StreamChromeServer.exe`, then stops and restarts the server to replace that executable. Engines, media, settings, and catalog data are outside the update package. The app ZIP is for updating an existing installation; use the setup executable for a full installation.
+
+### Credentials
 
 Subtitle API keys, addon configuration that may include private tokens, and Jellyfin link credentials are encrypted for the current Windows user with DPAPI. Remote access stores a salted PIN hash. Browser-facing addon information uses masked URLs and session tokens.
 
@@ -132,6 +155,8 @@ python scripts/build_online_installer.py
 The builder requires a new output directory and refuses to overwrite an existing one. Dependency versions and SHA-256 pins are maintained in `installer/dependencies.json`.
 
 ## Screenshots and credits
+
+Figures 2–13 were captured with version 1.0.0. Figures 14–17 show the Settings, addon, Exit, and discovery interfaces introduced in 1.1.0.
 
 Orbit, The Ridge, Tides, and After Hours are fictional demonstration titles. Their artwork is licensed photography, not official movie posters. The small demonstration video and its metadata illustrate playback and file inspection; screenshots do not represent a supplied media collection.
 

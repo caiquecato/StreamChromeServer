@@ -1,11 +1,13 @@
 """Build the public installer; engines are downloaded from their pinned origins."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+import zipfile
 from urllib.parse import urlparse
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -41,10 +43,15 @@ def dependency_entries(entries):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output', type=Path, default=PROJECT / 'dist/public-1.0.0')
+    parser.add_argument('--version', default='1.1.0')
+    parser.add_argument('--output', type=Path)
     parser.add_argument('--app-exe', type=Path, help='Use an already verified application build')
     args = parser.parse_args()
-    output = args.output.resolve()
+    if not re.fullmatch(r'\d+\.\d+\.\d+', args.version):
+        parser.error('Version must use major.minor.patch numbers.')
+    if not re.fullmatch(r'[0-9]+(?:[.][0-9]+)*(?:-[0-9]+)?', args.version):
+        parser.error('Version must contain only numeric components.')
+    output = (args.output or PROJECT / f'dist/public-{args.version}').resolve()
     if output.exists():
         parser.error('Choose a new output directory; existing files are never overwritten.')
     compiler = find_iscc()
@@ -58,13 +65,20 @@ def main():
         payload.mkdir()
         shutil.copy2(args.app_exe.resolve(), payload / 'StreamChromeServer.exe')
     else:
-        subprocess.run([sys.executable, str(PROJECT / 'scripts/build_release.py'), '--app-only', '--output', str(payload)], check=True)
+        subprocess.run([sys.executable, str(PROJECT / 'scripts/build_release.py'), '--app-only', '--version', args.version, '--output', str(payload)], check=True)
+    shutil.copy2(PROJECT / 'assets/app.ico', payload / 'app.ico')
     shutil.copy2(PROJECT / 'docs/THIRD_PARTY_LICENSES.md', payload / 'THIRD_PARTY_LICENSES.md')
     shutil.copytree(PROJECT / 'licenses', payload / 'app/licenses')
     include = output / 'dependencies.iss'
     include.write_text(include_text, encoding='utf-8')
-    subprocess.run([str(compiler), '/DOnlineMode=1', f'/DReleaseRoot={payload}', f'/DDependencyInclude={include}',
+    subprocess.run([str(compiler), '/DOnlineMode=1', f'/DReleaseVersion={args.version}', f'/DReleaseRoot={payload}', f'/DDependencyInclude={include}',
                     f'/O{output}', str(PROJECT / 'installer/StreamChromeServer.iss')], check=True)
+    update = output / f'StreamChromeServer-{args.version}-app.zip'
+    with zipfile.ZipFile(update, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.write(payload / 'StreamChromeServer.exe', 'StreamChromeServer.exe')
+    assets = [output / f'StreamChromeServer-{args.version}-Setup.exe', update]
+    (output / 'SHA256SUMS.txt').write_text(''.join(
+        hashlib.file_digest(asset.open('rb'), 'sha256').hexdigest() + '  ' + asset.name + '\n' for asset in assets), encoding='ascii')
     print(f'Public installer ready under {output}; no engine binaries embedded.')
 
 

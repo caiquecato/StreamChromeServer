@@ -1,5 +1,5 @@
 #ifndef ReleaseVersion
-#define ReleaseVersion "1.0.0"
+#define ReleaseVersion "1.1.0"
 #endif
 #ifndef OnlineMode
 #define OnlineMode 0
@@ -37,6 +37,7 @@ RestartApplications=no
 
 [Files]
 Source: "{#ReleaseRoot}\StreamChromeServer.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ReleaseRoot}\app.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ReleaseRoot}\THIRD_PARTY_LICENSES.md"; DestDir: "{app}"; Flags: ignoreversion
 #if OnlineMode
 #include DependencyInclude
@@ -50,10 +51,12 @@ Source: "{#ReleaseRoot}\app\licenses\*"; DestDir: "{code:EngineDir}\licenses"; F
 
 [Dirs]
 Name: "{app}\app\data"; Check: IsPortable
-Name: "{app}\Filmes"; Check: IsPortable
+Name: "{app}\Movies"; Check: IsPortable
 Name: "{app}\Series"; Check: IsPortable
 
 [Tasks]
+Name: portableautorun; Description: "Start when this drive connects to this computer (installs a per-user local watcher and Windows startup entry)"; Flags: unchecked; Check: IsPortable
+Name: driveicon; Description: "Use the StreamChrome icon for this drive (updates only its autorun.inf icon)"; Flags: unchecked; Check: IsPortable
 Name: desktopicon; Description: "Create a desktop shortcut"; Flags: unchecked; Check: IsStandard
 
 [Icons]
@@ -61,6 +64,8 @@ Name: "{autoprograms}\StreamChrome Server"; Filename: "{app}\StreamChromeServer.
 Name: "{autodesktop}\StreamChrome Server"; Filename: "{app}\StreamChromeServer.exe"; Tasks: desktopicon; Check: IsStandard
 
 [Run]
+Filename: "{app}\StreamChromeServer.exe"; Parameters: "--configure-integration {{\""autorun\"":true}"; Flags: runhidden waituntilterminated; Tasks: portableautorun; Check: IsPortable
+Filename: "{app}\StreamChromeServer.exe"; Parameters: "--configure-integration {{\""drive_icon\"":true}"; Flags: runhidden waituntilterminated; Tasks: driveicon; Check: IsPortable
 Filename: "{app}\StreamChromeServer.exe"; Description: "Open StreamChrome Server"; Flags: nowait postinstall skipifsilent
 
 [Code]
@@ -90,7 +95,7 @@ begin
   ModePage := CreateInputOptionPage(wpWelcome, 'Installation mode',
     'Choose a standard or portable installation',
     'Standard: shortcuts and an uninstaller; data is kept in your Windows profile.' + #13#10 +
-    'Portable: choose an HD or USB folder; no shortcuts, registry entry or uninstaller.', True, False);
+    'Portable: choose an HD or USB folder; no startup registration unless selected. Automatic launch needs a local watcher on this computer.', True, False);
 #if OnlineMode
   ModePage.SubCaptionLabel.Caption := 'Internet access is required. Official components are downloaded and checked before installation.';
 #endif

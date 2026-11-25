@@ -51,12 +51,15 @@ class DemoHandler(app.StreamProHandler):
                 self.send_bytes((ASSETS / name).read_bytes(), 'image/jpeg')
             else:
                 self.send_json({'error': 'Demo image not available'}, 404)
+        elif path == '/api/app-settings':
+            self.send_json({'version': app.APP_VERSION, 'integration': {'available': False, 'autorun': False, 'drive_icon': False, 'reason': 'Integration requires the compiled Windows executable.'},
+                            'paths': {'movies': 'C:\\StreamChromeServer\\Movies', 'series': 'C:\\StreamChromeServer\\Series', 'data': 'C:\\StreamChromeServer\\app\\data'}})
         elif path == '/api/catalog':
             self.send_json({'movies': ITEMS[:3], 'series': ITEMS[3:], 'hero_items': ITEMS,
                             'featured': ITEMS[0], 'continue_watching': [i for i in ITEMS if i['position'] >= 3],
                             'media_root': str(PROJECT / 'scratch/demo_library'), 'library_paths': {}, 'stats': {'movies': 3, 'series': 1}})
         elif path == '/api/discover':
-            self.send_json({'items': [dict(ITEMS[3], kind='series')], 'genres': ['Drama', 'Comedy', 'Sci-Fi']})
+            self.send_json({'items': [dict(i, kind='movie') for i in ITEMS[:3]], 'genres': ['Drama', 'Comedy', 'Sci-Fi']})
         elif path == '/api/imdb/meta':
             self.send_json(META)
         elif path == '/api/catalog/series':

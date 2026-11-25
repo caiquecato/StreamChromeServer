@@ -6,6 +6,7 @@ dist/
 build/
 data/
 /Filmes/
+/Movies/
 /Series/
 posters/
 *.exe

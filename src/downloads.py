@@ -90,7 +90,7 @@ class DownloadService:
         raw_title=info.get('series') if is_series and info.get('series') else (guessed.get('title') or job.get('title') or 'Video')
         clean_title=_safe_name(raw_title,fallback='Video',max_len=90)
         folder_name=f'{clean_title} ({year})' if year else clean_title
-        base_root=dest.parent if dest_lower in ('filmes','series') else None
+        base_root=dest.parent if dest_lower in ('movies','filmes','series') else None
         if is_series:
             season=max(1,int(info.get('season_number') or guessed.get('season') or 1))
             episode=max(1,int(info.get('episode_number') or guessed.get('episode') or 1))
@@ -98,7 +98,7 @@ class DownloadService:
             folder=(root_cat/_safe_name(folder_name,max_len=100)/f'Season {season:02d}')
             template=f'{clean_title} - S{season:02d}E{episode:02d}.%(ext)s'
         else:
-            root_cat=(base_root/'Filmes') if base_root else dest
+            root_cat=(base_root/'Movies') if base_root else dest
             folder=(root_cat/_safe_name(folder_name,max_len=100))
             template=f'{folder_name}.%(ext)s'
         return folder,template

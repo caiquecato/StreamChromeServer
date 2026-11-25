@@ -202,7 +202,8 @@ class ServerTests(unittest.TestCase):
                     with patch.object(server, 'choose_local_video', return_value='') as dialog, \
                          patch.object(server.SUBTITLES, 'configure', return_value={}) as configure, \
                          patch.object(server.ADDONS, 'add_addon', return_value=[]) as addons:
-                        for path in ('/api/local/open', '/api/settings', '/api/stremio/addons'):
+                        self.assertEqual(self.request('/api/app-settings', extra_headers=remote_headers)[0], 403)
+                        for path in ('/api/local/open', '/api/settings', '/api/stremio/addons', '/api/app-settings', '/api/updates/check', '/api/updates/apply'):
                             self.assertEqual(self.request(path, {}, remote_headers)[0], 403, path)
                         dialog.assert_not_called()
                         configure.assert_not_called()

@@ -92,6 +92,7 @@ function harness() {
             calls.push({url, body});
             if (url === '/api/catalog') return {movies: [], series: [], continue_watching: []};
             if (url === '/api/library/downloads') return {jobs: []};
+            if (url === '/api/discover/catalogs') return {catalogs: [{key: 'popular', kind: 'movie', name: 'Popular', source: 'Cinemeta', genres: [], genre_filter: false, search: true, required_filters: []}]};
             if (url.startsWith('/api/discover?')) return {items: [{kind: 'series', imdb_id: 'tt123', title: 'Test series'}]};
             if (url.startsWith('/api/imdb/meta?')) return {kind: 'series', imdb_id: 'tt123', title: 'Test series', seasons: [{season: 1, episodes}]};
             if (url.startsWith('/api/stremio/streams?')) {

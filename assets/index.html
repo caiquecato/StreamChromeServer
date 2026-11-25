@@ -7,7 +7,7 @@
     <title>StreamChrome Server</title>
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="stylesheet" href="/player.css"><link rel="stylesheet" href="/layouts.css"><link rel="stylesheet" href="/hub.css">
-<link rel="stylesheet" href="/series.css">
+<link rel="stylesheet" href="/series.css"><link rel="stylesheet" href="/settings.css">
 </head>
 <body data-panel-open="false" data-view="catalog" data-has-media="false">
 
@@ -16,11 +16,7 @@
     <div class="brand"><div class="brand-icon" aria-hidden="true"><svg viewbox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg></div><div class="brand-title">StreamChrome <span>Server</span></div><nav class="hub-nav"><button type="button" class="hub-nav-btn" id="navCatalog" aria-current="page" onclick="setHubView(&#x27;catalog&#x27;)" data-i18n="Local">Local</button><button type="button" class="hub-nav-btn" id="navDiscover" onclick="setHubView(&#x27;discover&#x27;)" data-i18n="Discover">Discover</button><button type="button" class="hub-nav-btn" id="navPlayer" onclick="setHubView(&#x27;player&#x27;)" data-i18n="Player">Player</button></nav></div>
     <div class="hub-search-box"><input type="search" id="hubSearchInput" class="hub-search-input" placeholder="Search movies, series or IMDb ID (tt...)" data-i18n-placeholder="Search movies, series or IMDb ID (tt...)" data-i18n-aria="Search movies, series or IMDb ID (tt...)"></div>
     <div class="header-film-title" id="headerMediaTitle"></div><div class="header-actions"><button class="header-action" data-player-only="true" onclick="setHubView(&#x27;player&#x27;); openMediaPanel(&#x27;url&#x27;)" aria-label="Open URL" title="Open URL" data-i18n-title="Open URL" data-i18n-aria="Open URL"><svg viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m9 15 6-6M8 17l-2 2a4 4 0 0 1-5-5l5-5a4 4 0 0 1 5 0m2 6a4 4 0 0 0 5 0l5-5a4 4 0 0 0-5-5l-2 2"></path></svg><span data-i18n="Open URL">Open URL</span></button><button class="header-action" data-player-only="true" onclick="openLocalVideo(); setHubView(&#x27;player&#x27;)" aria-label="Open file" title="Open file" data-open-file data-i18n-title="Open file" data-i18n-aria="Open file"><svg viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 7h7l2 2h9v11H3z"></path><path d="M3 7V4h7l2 3"></path></svg><span data-i18n="Open file">Open file</span></button><button class="header-action" data-player-only="true" onclick="openMediaPanel(&#x27;audio&#x27;)" aria-label="Audio" title="Audio" data-i18n-title="Audio" data-i18n-aria="Audio"><svg viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9zM16 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"></path></svg><span data-i18n="Audio">Audio</span></button><button class="header-action" data-player-only="true" onclick="setSidePanel(&#x27;subtitle&#x27;)" aria-label="Subtitles" title="Subtitles" id="headerSubtitles" data-i18n-title="Subtitles" data-i18n-aria="Subtitles"><svg viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M6 10h5m2 0h5M6 14h7m2 0h3"></path></svg><span data-i18n="Subtitles">Subtitles</span></button><button class="header-action" id="headerDownloadsBtn" onclick="openDownloadsModal()" aria-label="Downloads" title="Downloads" data-i18n-title="Downloads" data-i18n-aria="Downloads"><svg viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3v12m0 0-4-4m4 4 4-4"></path><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"></path></svg><span data-i18n="Downloads">Downloads</span><span class="dl-badge" id="downloadsBadge" hidden>0</span></button><button class="header-action" onclick="openRemoteModal()" aria-label="TV &amp; Remote" title="TV &amp; Remote" data-i18n-title="TV &amp; Remote" data-i18n-aria="TV &amp; Remote"><svg viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"></rect><path d="M8 21h8M12 19v2"></path></svg><span data-i18n="TV &amp; Remote">TV &amp; Remote</span></button>
-        <details class="appearance-menu" id="appearanceMenu"><summary data-i18n="Appearance">Appearance</summary><div class="appearance-popover appearance-options">
-            <label class="field"> <span data-i18n="Layout">Layout</span> <select id="layoutSelect" onchange="AppUI.update({layout:this.value})"><option value="neutral" data-i18n="Neutral">Neutral</option><option value="cinema" data-i18n="Cinema">Cinema</option><option value="classic" data-i18n="Classic">Classic</option><option value="studio" data-i18n="Studio">Studio</option><option value="library" data-i18n="Library">Library</option><option value="glass" data-i18n="Quiet Glass">Quiet Glass</option></select></label>
-            <label class="field"> <span data-i18n="Theme">Theme</span> <select id="themeSelect" onchange="AppUI.update({theme:this.value})"><option value="dark" data-i18n="Dark">Dark</option><option value="light" data-i18n="Light">Light</option></select></label>
-            <label class="field"> <span data-i18n="Language">Language</span> <select id="uiLanguage" aria-label="Language" onchange="AppUI.update({language:this.value})" data-i18n-aria="Language"><option value="en">English</option><option value="pt">Português</option><option value="es">Español</option></select></label>
-        </div></details>
+        <button class="header-action" id="navSettings" onclick="setHubView('settings')" data-i18n-aria="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/><path d="m9 3-1 3-3 1v3l-2 2 2 2v3l3 1 1 3h6l1-3 3-1v-3l2-2-2-2V7l-3-1-1-3Z"/></svg><span data-i18n="Settings">Settings</span></button>
         <button class="theme-toggle" id="themeToggle" hidden onclick="AppUI.toggleTheme()" aria-label="Switch to light theme"></button>
         <button class="exit-player" id="exitPlayerButton" onclick="exitPlayer()" title="Close server" data-i18n-title="Close server"><span data-i18n="Exit">Exit</span></button>
     </div>
@@ -29,6 +25,46 @@
     <main class="hub-stage" id="hubStage">
         <div id="catalogView"></div>
         <div id="discoverView" hidden></div>
+        <section id="settingsView" class="settings-page" hidden aria-labelledby="settingsHeading">
+          <header class="settings-page-header"><h1 id="settingsHeading" data-i18n="Settings">Settings</h1><p data-i18n="Make StreamChrome Server work your way.">Make StreamChrome Server work your way.</p></header>
+          <div class="settings-layout">
+            <nav class="settings-navigation" aria-label="Settings sections" data-i18n-aria="Settings sections">
+              <a href="#settingsAppearance" data-i18n="Appearance">Appearance</a><a href="#settingsLibrary" data-i18n="Library">Library</a><a href="#settingsSources" data-i18n="Sources and subtitles">Sources and subtitles</a><a href="#settingsWindows" data-i18n="Windows integration">Windows integration</a><a href="#settingsUpdates" data-i18n="Updates">Updates</a>
+            </nav>
+            <div class="settings-content">
+              <section id="settingsAppearance" class="settings-section"><h2 data-i18n="Appearance">Appearance</h2><div class="settings-fields">
+            <label class="field"> <span data-i18n="Layout">Layout</span> <select id="layoutSelect" onchange="AppUI.update({layout:this.value})"><option value="neutral" data-i18n="Neutral">Neutral</option><option value="cinema" data-i18n="Cinema">Cinema</option><option value="classic" data-i18n="Classic">Classic</option><option value="studio" data-i18n="Studio">Studio</option><option value="library" data-i18n="Library">Library</option><option value="glass" data-i18n="Quiet Glass">Quiet Glass</option></select></label>
+            <label class="field"> <span data-i18n="Theme">Theme</span> <select id="themeSelect" onchange="AppUI.update({theme:this.value})"><option value="dark" data-i18n="Dark">Dark</option><option value="light" data-i18n="Light">Light</option></select></label>
+            <label class="field"> <span data-i18n="Language">Language</span> <select id="uiLanguage" aria-label="Language" onchange="AppUI.update({language:this.value})" data-i18n-aria="Language"><option value="en">English</option><option value="pt">Português</option><option value="es">Español</option></select></label>
+        </div></section>
+              <section id="settingsLibrary" class="settings-section"><h2 data-i18n="Library">Library</h2><p data-i18n="New downloads are saved to Movies and Series. Existing Filmes folders remain readable.">New downloads are saved to Movies and Series. Existing Filmes folders remain readable.</p><dl id="settingsPaths" class="settings-paths"></dl><div class="settings-actions"><button type="button" class="btn btn-vlc" data-settings-folder="movies" data-i18n="Open Movies">Open Movies</button><button type="button" class="btn btn-vlc" data-settings-folder="series" data-i18n="Open Series">Open Series</button><button type="button" class="btn btn-vlc" id="settingsScan" data-i18n="Scan library">Scan library</button></div></section>
+              <section id="settingsSources" class="settings-section"><h2 data-i18n="Sources and subtitles">Sources and subtitles</h2><div class="settings-actions"><button type="button" class="btn btn-vlc" id="settingsAddons" data-i18n="Manage addons">Manage addons</button><button type="button" class="btn btn-vlc" onclick="openRemoteModal()" data-i18n="TV &amp; Remote">TV &amp; Remote</button></div>        <details class="settings" id="subtitleSettings">
+            <summary> <span data-i18n="Subtitle settings">Subtitle settings</span> <span id="providerStatus"></span></summary>
+            <p class="hint" data-i18n="Enter your keys once. They are protected by your Windows account and stored outside the project folder.">Enter your keys once. They are protected by your Windows account and stored outside the project folder.</p>
+            <form onsubmit="event.preventDefault(); saveProviderSettings()">
+                <div class="settings-grid">
+                    <label class="field"> <span data-i18n="SubDL API key">SubDL API key</span> <input type="password" id="subdlKey" autocomplete="off" placeholder="Paste your SubDL key" data-i18n-placeholder="Paste your SubDL key"></label>
+                    <label class="field"> <span data-i18n="OpenSubtitles.com API key">OpenSubtitles.com API key</span> <input type="password" id="openKey" autocomplete="off" placeholder="Paste your OpenSubtitles key" data-i18n-placeholder="Paste your OpenSubtitles key"></label>
+                    <label class="field"> <span data-i18n="OpenSubtitles.com username (optional)">OpenSubtitles.com username (optional)</span> <input id="openUsername" autocomplete="username" placeholder="To connect your account" data-i18n-placeholder="To connect your account"></label>
+                    <label class="field"> <span data-i18n="OpenSubtitles.com password (optional)">OpenSubtitles.com password (optional)</span> <input type="password" id="openPassword" autocomplete="current-password" placeholder="Used only to sign in" data-i18n-placeholder="Used only to sign in"></label>
+                </div>
+                <div class="search-actions">
+                    <button class="btn btn-vlc" type="submit" id="saveSettingsButton" data-i18n="Save settings">Save settings</button>
+                    <a href="https://subdl.com/developers" target="_blank" rel="noopener noreferrer" data-i18n="Get a SubDL key">Get a SubDL key</a>
+                    <a href="https://www.opensubtitles.com/en/consumers" target="_blank" rel="noopener noreferrer" data-i18n="Get an OpenSubtitles.com key">Get an OpenSubtitles.com key</a>
+                    <a href="https://www.opensubtitles.com/en/users/import" target="_blank" rel="noopener noreferrer" data-i18n="Import your .org account">Import your .org account</a>
+                </div>
+                <p class="hint" data-i18n="Empty key fields keep the current settings. An API key is required; a username and password alone are not enough. Import .org accounts into .com. Your password is not saved.">Empty key fields keep the current settings. An API key is required; a username and password alone are not enough. Import .org accounts into .com. Your password is not saved.</p>
+            </form>
+            <div class="notice" id="settingsStatus" role="status" aria-live="polite"></div>
+        </details></section>
+              <section id="settingsWindows" class="settings-section"><h2 data-i18n="Windows integration">Windows integration</h2><p data-i18n="Portable auto-launch uses a small monitor on this Windows account. Enable it once on each PC you use.">Portable auto-launch uses a small monitor on this Windows account. Enable it once on each PC you use.</p><label class="settings-switch"><span><strong data-i18n="Open when this drive is connected">Open when this drive is connected</strong><small data-i18n="Starts only the registered portable server on this PC.">Starts only the registered portable server on this PC.</small></span><input id="settingsAutorun" type="checkbox" role="switch"></label><label class="settings-switch"><span><strong data-i18n="Use StreamChrome drive icon">Use StreamChrome drive icon</strong><small data-i18n="Shows the application icon in Windows Explorer.">Shows the application icon in Windows Explorer.</small></span><input id="settingsDriveIcon" type="checkbox" role="switch"></label><p class="notice" id="integrationStatus" role="status" aria-live="polite"></p></section>
+              <section id="settingsUpdates" class="settings-section"><h2 data-i18n="Updates">Updates</h2><p data-i18n="Updates come from the official GitHub repository. Your library and settings stay in place.">Updates come from the official GitHub repository. Your library and settings stay in place.</p><p id="updateVersion"></p><div class="settings-actions"><button type="button" class="btn btn-vlc" id="checkUpdates" data-i18n="Check for updates">Check for updates</button><button type="button" class="btn btn-play" id="applyUpdate" hidden data-i18n="Update now">Update now</button></div><p class="notice" id="updateStatus" role="status" aria-live="polite"></p></section>
+              <p id="appSettingsStatus" class="notice" role="status" aria-live="polite"></p>
+            </div>
+          </div>
+        </section>
+
     </main>
 
     <div class="hub-modal-backdrop" id="hubModalBackdrop" hidden onclick="if(event.target===this)closeHubModal()">
@@ -201,26 +237,7 @@
             </div>
         </details>
 </details>
-        <details class="settings" id="subtitleSettings">
-            <summary> <span data-i18n="Subtitle settings">Subtitle settings</span> <span id="providerStatus"></span></summary>
-            <p class="hint" data-i18n="Enter your keys once. They are protected by your Windows account and stored outside the project folder.">Enter your keys once. They are protected by your Windows account and stored outside the project folder.</p>
-            <form onsubmit="event.preventDefault(); saveProviderSettings()">
-                <div class="settings-grid">
-                    <label class="field"> <span data-i18n="SubDL API key">SubDL API key</span> <input type="password" id="subdlKey" autocomplete="off" placeholder="Paste your SubDL key" data-i18n-placeholder="Paste your SubDL key"></label>
-                    <label class="field"> <span data-i18n="OpenSubtitles.com API key">OpenSubtitles.com API key</span> <input type="password" id="openKey" autocomplete="off" placeholder="Paste your OpenSubtitles key" data-i18n-placeholder="Paste your OpenSubtitles key"></label>
-                    <label class="field"> <span data-i18n="OpenSubtitles.com username (optional)">OpenSubtitles.com username (optional)</span> <input id="openUsername" autocomplete="username" placeholder="To connect your account" data-i18n-placeholder="To connect your account"></label>
-                    <label class="field"> <span data-i18n="OpenSubtitles.com password (optional)">OpenSubtitles.com password (optional)</span> <input type="password" id="openPassword" autocomplete="current-password" placeholder="Used only to sign in" data-i18n-placeholder="Used only to sign in"></label>
-                </div>
-                <div class="search-actions">
-                    <button class="btn btn-vlc" type="submit" id="saveSettingsButton" data-i18n="Save settings">Save settings</button>
-                    <a href="https://subdl.com/developers" target="_blank" rel="noopener noreferrer" data-i18n="Get a SubDL key">Get a SubDL key</a>
-                    <a href="https://www.opensubtitles.com/en/consumers" target="_blank" rel="noopener noreferrer" data-i18n="Get an OpenSubtitles.com key">Get an OpenSubtitles.com key</a>
-                    <a href="https://www.opensubtitles.com/en/users/import" target="_blank" rel="noopener noreferrer" data-i18n="Import your .org account">Import your .org account</a>
-                </div>
-                <p class="hint" data-i18n="Empty key fields keep the current settings. An API key is required; a username and password alone are not enough. Import .org accounts into .com. Your password is not saved.">Empty key fields keep the current settings. An API key is required; a username and password alone are not enough. Import .org accounts into .com. Your password is not saved.</p>
-            </form>
-            <div class="notice" id="settingsStatus" role="status" aria-live="polite"></div>
-        </details>
+
     </section>
             </div>
         </aside>
@@ -230,6 +247,7 @@
 <script src="/i18n.js"></script><script src="/appearance.js"></script><script src="/player_helpers.js"></script>
 <script>
     async function exitPlayer() {
+        if (!await StreamSettings.confirmExit()) return;
         try { await api('/api/shutdown', {}); video.pause(); document.body.textContent = AppUI.translate('Player stopped. You can close this tab.'); }
         catch { notice('playerStatus', 'Could not stop the player. Use Exit in the system tray.', true); }
     }
@@ -765,6 +783,7 @@
     }
 </script>
 
-<script src="/presentation.js"></script><script src="/downloads.js"></script><script src="/qrcode.js"></script><script src="/season_queue.js"></script><script src="/hub.js"></script>
+<script src="/presentation.js"></script><script src="/downloads.js"></script><script src="/qrcode.js"></script><script src="/season_queue.js"></script><script src="/hub.js"></script><script src="/settings.js"></script>
+<dialog id="exitConfirmation" class="exit-confirmation" aria-labelledby="exitHeading"><form method="dialog"><h2 id="exitHeading" data-i18n="Stop StreamChrome Server?">Stop StreamChrome Server?</h2><p data-i18n="Playback and active downloads will stop. Jellyfin will close too.">Playback and active downloads will stop. Jellyfin will close too.</p><div class="settings-actions"><button class="btn btn-vlc" value="cancel" data-i18n="Cancel" autofocus>Cancel</button><button class="btn btn-play" value="exit" data-i18n="Stop server">Stop server</button></div></form></dialog>
 </body>
 </html>

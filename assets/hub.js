@@ -4,7 +4,7 @@
     const t = key => (root.AppUI ? root.AppUI.translate(key) : key);
 
     let catalogData = { movies: [], series: [], continue_watching: [], featured: null, stats: {} };
-    let discoverState = { kind: 'movie', catalog: 'top', genre: '', genreMode: false, genres: [], items: [], loading: false };
+    let discoverState = { kind: 'movie', catalogKey: '', catalogs: null, genre: '', items: [], loading: false, error: '' };
     let discoverRequest = 0;
     let localImdbSet = new Set();
     let currentView = 'catalog';
@@ -99,15 +99,17 @@
         document.body.dataset.view = view;
         if ($('catalogView')) $('catalogView').hidden = view !== 'catalog';
         if ($('discoverView')) $('discoverView').hidden = view !== 'discover';
-        for (const [id, key] of [['navCatalog', 'catalog'], ['navDiscover', 'discover'], ['navPlayer', 'player']]) {
+        if ($('settingsView')) $('settingsView').hidden = view !== 'settings';
+        for (const [id, key] of [['navCatalog', 'catalog'], ['navDiscover', 'discover'], ['navPlayer', 'player'], ['navSettings', 'settings']]) {
             const btn = $(id);
             if (btn) {
                 if (key === view) btn.setAttribute('aria-current', 'page');
                 else btn.removeAttribute('aria-current');
             }
         }
-        if (view === 'catalog') saveCurrentProgress().finally(loadCatalog);
-        else if (view === 'discover' && !discoverState.items.length) loadDiscover();
+        if (view === 'settings') root.StreamSettings?.open();
+        else if (view === 'catalog') saveCurrentProgress().finally(loadCatalog);
+        else if (view === 'discover' && (!discoverState.items.length || !discoverState.catalogs)) loadDiscover();
     }
     root.setHubView = setHubView;
 
@@ -327,76 +329,122 @@
         } catch {}
     }
 
+    function discoverCatalogOptions() {
+        return (discoverState.catalogs || []).filter(c => discoverState.kind === 'other'
+            ? !['movie', 'series', 'anime'].includes(c.kind) : c.kind === discoverState.kind);
+    }
+
+    function activeDiscoverCatalog() {
+        return discoverCatalogOptions().find(c => c.key === discoverState.catalogKey);
+    }
+
+    function selectDiscoverCatalog() {
+        const options = discoverCatalogOptions();
+        let selected = activeDiscoverCatalog();
+        if (!selected) {
+            selected = options[0];
+            discoverState.catalogKey = selected?.key || '';
+        }
+        const genres = selected?.genres || [];
+        if (!genres.includes(discoverState.genre)) discoverState.genre = '';
+        if (selected?.required_filters?.includes('genre') && !discoverState.genre) {
+            discoverState.genre = genres[0] || '';
+        }
+        return selected;
+    }
+
     function renderDiscover() {
         const container = $('discoverView');
         if (!container) return;
-        const pills = el('div', { className: 'hub-pills' }, [
-            ['movie', 'top', 'Trending Movies'],
-            ['series', 'top', 'Trending Series'],
-            ['movie', 'imdbRating', 'Top IMDb Movies'],
-            ['series', 'imdbRating', 'Top IMDb Series'],
-        ].map(([kind, cat, label]) => el('button', {
-            type: 'button',
-            text: t(label),
-            'aria-pressed': String(!discoverState.genreMode && discoverState.kind === kind && discoverState.catalog === cat),
-            onClick: () => {
-                discoverState.kind = kind;
-                discoverState.catalog = cat;
-                discoverState.genreMode = false;
-                discoverState.genre = '';
-                loadDiscover();
-            },
-        })));
-        for (const [kind, label] of [['movie', 'Movies by genre'], ['series', 'Series by genre']]) {
-            pills.append(el('button', {type: 'button', text: t(label), 'aria-pressed': String(discoverState.genreMode && discoverState.kind === kind), onClick: () => {
-                discoverState.kind = kind;
-                discoverState.catalog = 'top';
-                discoverState.genreMode = true;
-                discoverState.genre = '';
-                loadDiscover();
-            }}));
-        }
-
-        const head = el('div', { className: 'hub-section-head' }, [
-            pills,
-            el('button', { type: 'button', className: 'btn btn-vlc', text: t('Addons'), onClick: () => openAddonsModal() }),
+        const selected = activeDiscoverCatalog();
+        const options = discoverCatalogOptions();
+        const field = (label, select) => el('label', { className: 'discover-filter' }, [
+            el('span', { text: t(label) }), select,
         ]);
-
+        const typeSelect = el('select', { 'aria-label': t('Type'), onChange: e => {
+            discoverState.kind = e.target.value;
+            discoverState.catalogKey = '';
+            discoverState.genre = '';
+            loadDiscover();
+        } }, [['movie', 'Movies'], ['series', 'Series'], ['other', 'Other'], ['anime', 'Anime']]
+            .map(([value, label]) => el('option', { value, text: t(label) })));
+        typeSelect.value = discoverState.kind;
+        const catalogSelect = el('select', { 'aria-label': t('Catalog'), onChange: e => {
+            discoverState.catalogKey = e.target.value;
+            discoverState.genre = '';
+            loadDiscover();
+        } }, options.length ? options.map(c => el('option', {
+            value: c.key, text: c.source === 'Cinemeta' ? t(c.name) : `${c.name} · ${c.source}`,
+        })) : [el('option', { value: '', text: t('No catalogs available') })]);
+        catalogSelect.value = discoverState.catalogKey;
+        catalogSelect.disabled = !options.length;
+        const genres = selected?.genres || [];
+        const yearFilter = genres.length > 0 && genres.every(g => /^\d{4}$/.test(g));
+        const genreLabel = yearFilter ? 'Year' : 'Genre';
+        const genreSelect = el('select', { 'aria-label': t(genreLabel), onChange: e => {
+            discoverState.genre = e.target.value;
+            loadDiscover();
+        } }, [
+            ...(!selected?.required_filters?.includes('genre') ? [el('option', { value: '', text: t(yearFilter ? 'All years' : 'All genres') })] : []),
+            ...genres.map(g => el('option', { value: g, text: g })),
+        ]);
+        genreSelect.value = discoverState.genre;
+        genreSelect.disabled = !selected?.genre_filter || !genres.length;
+        const filters = el('div', { className: 'discover-filters' }, [
+            field('Type', typeSelect), field('Catalog', catalogSelect), field(genreLabel, genreSelect),
+        ]);
         let body;
         if (discoverState.loading) {
-            body = el('p', { className: 'notice', text: t('Loading IMDb & Stremio catalog…') });
+            body = el('p', { className: 'notice', role: 'status', text: t('Loading IMDb & Stremio catalog…') });
+        } else if (discoverState.error) {
+            body = el('div', { className: 'discover-notice', role: 'status' }, [
+                el('p', { className: 'notice', text: discoverState.error }),
+                el('button', { type: 'button', className: 'btn btn-vlc', text: t('Retry'), onClick: () => loadDiscover() }),
+            ]);
+        } else if (!selected) {
+            body = el('p', { className: 'notice', text: t('No catalogs for this type. Configure an addon that provides this catalog in Settings.') });
         } else if (!discoverState.items.length) {
             body = el('p', { className: 'notice', text: t('No titles found. Try another title or IMDb ID (tt...).') });
         } else {
             body = el('div', { className: 'poster-grid' }, discoverState.items.map(item => makeMediaCard(item, {
                 isDiscover: true,
-                onClick: () => openImdbModal(item.kind, item.imdb_id),
+                onClick: () => {
+                    if (item.playable !== false && ['movie', 'series'].includes(item.kind) && item.imdb_id) {
+                        openImdbModal(item.kind, item.imdb_id);
+                    } else if (item.stremio_url?.startsWith('stremio:///detail/')) {
+                        root.open(item.stremio_url, '_blank', 'noopener');
+                    }
+                },
             })));
         }
-        const genreSelect = el('select', {'aria-label': t('All genres'), onChange: e => {
-            discoverState.genre = e.target.value;
-            loadDiscover();
-        }}, [el('option', {value: '', text: t('All genres')}), ...discoverState.genres.map(g => el('option', {value: g, text: g}))]);
-        genreSelect.value = discoverState.genre;
-        container.replaceChildren(head, ...(discoverState.genreMode ? [genreSelect] : []), body);
+        container.replaceChildren(filters, body);
+        container.setAttribute('aria-busy', String(discoverState.loading));
     }
 
     async function loadDiscover() {
         const request = ++discoverRequest;
         discoverState.loading = true;
+        discoverState.error = '';
         renderDiscover();
-        const q = ($('hubSearchInput')?.value || '').trim();
         try {
-            const params = new URLSearchParams({ kind: discoverState.kind, catalog: discoverState.catalog });
+            if (!discoverState.catalogs) {
+                const data = await callApi('/api/discover/catalogs');
+                if (request !== discoverRequest) return;
+                discoverState.catalogs = data.catalogs || [];
+            }
+            const selected = selectDiscoverCatalog();
+            if (!selected) { discoverState.items = []; return; }
+            const q = ($('hubSearchInput')?.value || '').trim();
+            const params = new URLSearchParams({ kind: selected.kind, catalog_key: selected.key });
             if (q) params.set('q', q);
-            if (discoverState.genreMode && discoverState.genre) params.set('genre', discoverState.genre);
+            if (discoverState.genre) params.set('genre', discoverState.genre);
             const data = await callApi('/api/discover?' + params);
             if (request !== discoverRequest) return;
             discoverState.items = data.items || [];
-            discoverState.genres = data.genres || [];
-        } catch {
+        } catch (err) {
             if (request !== discoverRequest) return;
             discoverState.items = [];
+            discoverState.error = err.message || t('Could not load catalogs. Try again.');
         } finally {
             if (request === discoverRequest) {
                 discoverState.loading = false;
@@ -1038,9 +1086,9 @@
         openModal(t('Addons'), [el('p', { className: 'notice', text: t('Loading…') })], 'addons');
         try {
             const data = await callApi('/api/stremio/addons');
-            const list = el('div', { className: 'episode-list' });
-            const status = el('p', { className: 'notice' });
-            const input = el('input', { type: 'url', className: 'url-input', placeholder: 'https://.../manifest.json' });
+            const list = el('div', { className: 'episode-list addon-list' });
+            const status = el('p', { className: 'notice', role: 'status', 'aria-live': 'polite' });
+            const input = el('input', { type: 'url', className: 'url-input', id: 'addonManifestUrl', 'aria-label': t('Manifest URL'), required: 'required', autocomplete: 'off', placeholder: 'https://.../manifest.json' });
 
             const draw = addons => {
                 if (!addons.length) {
@@ -1050,34 +1098,46 @@
                 list.replaceChildren(...addons.map(a => el('div', { className: 'addon-row' }, [
                     el('div', {}, [
                         el('div', { className: 'episode-row-title', text: a.name }),
-                        el('div', { className: 'episode-row-meta', text: a.masked_url || a.url || '' }),
+                        el('div', { className: 'episode-row-meta', text: a.masked_url || '' }),
                     ]),
                     el('button', {
                         type: 'button', className: 'btn btn-vlc', text: t('Remove'),
-                        onClick: async () => {
-                            const res = await callApi('/api/stremio/addons', { action: 'remove', key: a.key || a.url });
-                            draw(res.addons || []);
+                        'aria-label': `${t('Remove')} ${a.name || t('Addon')}`,
+                        onClick: async e => {
+                            const button = e.currentTarget || e.target;
+                            button.disabled = true;
+                            status.textContent = '';
+                            try {
+                                const res = await callApi('/api/stremio/addons', { action: 'remove', key: a.key });
+                                discoverState.catalogs = null;
+                                draw(res.addons || []);
+                            } catch (err) {
+                                status.textContent = err.message;
+                            } finally { button.disabled = false; }
                         },
                     }),
                 ])));
             };
             draw(data.addons || []);
 
+            const addButton = el('button', { type: 'submit', className: 'btn btn-play', text: t('Add addon') });
             const addForm = el('form', {
-                className: 'remote-url-row',
+                className: 'addon-form',
                 onSubmit: async e => {
                     e.preventDefault();
+                    addButton.disabled = true;
                     status.textContent = t('Validating addon manifest…');
                     try {
                         const res = await callApi('/api/stremio/addons', { action: 'add', url: input.value.trim() });
                         input.value = '';
                         status.textContent = t('Addon added.');
+                        discoverState.catalogs = null;
                         draw(res.addons || []);
                     } catch (err) {
                         status.textContent = err.message;
-                    }
+                    } finally { addButton.disabled = false; }
                 },
-            }, [input, el('button', { type: 'submit', className: 'btn btn-play', text: t('Add addon') })]);
+            }, [el('label', { for: 'addonManifestUrl', text: t('Manifest URL') }), el('div', { className: 'addon-form-row' }, [input, addButton])]);
 
             openModal(t('Addons'), [
                 el('p', { className: 'notice', text: t('Configure Stremio addon manifest.json URLs to query HTTP streams directly inside StreamChrome Server.') }),
@@ -1089,6 +1149,8 @@
             openModal(t('Addons'), [el('p', { className: 'notice', text: err.message })], 'addons');
         }
     }
+
+    root.openAddonsModal = openAddonsModal;
 
     function qrBlock(url) {
         const wrap = el('div', { className: 'qr-wrap' });

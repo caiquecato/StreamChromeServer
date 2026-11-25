@@ -212,6 +212,7 @@ class RemoteAccessService:
         if port is not None and target == 'hub':
             self.hub_port = int(port)
             self._slots['hub'].target_url = f'http://127.0.0.1:{self.hub_port}'
+        self._slots['jellyfin'].target_url = f'http://127.0.0.1:{self.jellyfin_port}'
         with self._lock:
             if target == 'hub' and not self.has_pin():
                 raise ValueError('Set an access PIN before enabling the remote Hub link.')

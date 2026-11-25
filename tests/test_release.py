@@ -42,12 +42,12 @@ class ReleaseTests(unittest.TestCase):
         out = self.root / 'release'
         self.stage(out)
         self.assertEqual({p.relative_to(out).as_posix() for p in out.rglob('*') if p.is_file()}, {
-            'StreamChromeServer.exe', 'THIRD_PARTY_LICENSES.md', 'app/ffmpeg/ffmpeg.exe',
+            'StreamChromeServer.exe', 'app.ico', 'THIRD_PARTY_LICENSES.md', 'app/ffmpeg/ffmpeg.exe',
             'app/ffmpeg/ffprobe.exe', 'app/yt-dlp/yt-dlp.exe', 'app/cloudflared/cloudflared.exe',
             'app/jellyfin/system/jellyfin.exe', 'app/jellyfin/system/jellyfin.deps.json',
             'app/jellyfin/system/jellyfin-web/index.html'})
         self.assertTrue((out / 'app/data').is_dir())
-        self.assertTrue((out / 'Filmes').is_dir())
+        self.assertTrue((out / 'Movies').is_dir())
         self.assertTrue((out / 'Series').is_dir())
 
     def test_existing_destination_is_never_modified(self):

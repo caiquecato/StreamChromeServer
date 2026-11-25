@@ -29,7 +29,7 @@ PILLOW_NOTICES = ('AOM', 'BROTLI', 'BZIP2', 'DAV1D', 'FREETYPE2', 'HARFBUZZ', 'L
                   'LIBYUV', 'OPENJPEG', 'RAQM', 'XAU', 'XCB', 'XDMCP', 'ZLIB', 'ZSTD')
 ASSETS = ('app.ico', 'appearance.js', 'downloads.js', 'hub.css', 'hub.js', 'i18n.js',
           'index.html', 'layouts.css', 'manifest.webmanifest', 'player_helpers.js',
-          'player.css', 'presentation.js', 'qrcode.js', 'season_queue.js', 'series.css')
+          'player.css', 'presentation.js', 'qrcode.js', 'season_queue.js', 'series.css', 'settings.js', 'settings.css')
 SYSTEM_DIRS = {'jellyfin-web', 'Resources', 'ServerSetupApp', 'wwwroot'}
 SYSTEM_JSON = {'jellyfin.deps.json', 'jellyfin.runtimeconfig.json',
                'jellyfin.staticwebassets.endpoints.json'}
@@ -43,7 +43,8 @@ def stage_release(executable, binaries_root, destination, notice):
         raise FileExistsError(f'Refusing to modify existing release: {destination}')
     system = binaries_root / 'jellyfin/system'
     copies = [(executable, Path('StreamChromeServer.exe')),
-              (notice, Path('THIRD_PARTY_LICENSES.md'))]
+              (notice, Path('THIRD_PARTY_LICENSES.md')),
+              (PROJECT / 'assets/app.ico', Path('app.ico'))]
     copies.extend((binaries_root / item, Path('app') / item) for item in ENGINE_FILES)
     copies.extend((binaries_root / item, Path('app') / item) for item in OPTIONAL_FILES
                   if (binaries_root / item).is_file())
@@ -82,7 +83,7 @@ def stage_release(executable, binaries_root, destination, notice):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
     (destination / 'app/data').mkdir()
-    (destination / 'Filmes').mkdir()
+    (destination / 'Movies').mkdir()
     (destination / 'Series').mkdir()
     return destination
 
@@ -107,7 +108,7 @@ def main():
                         help='Trusted engines directory; only allowlisted distribution files are read')
     parser.add_argument('--output', type=Path,
                         help='New output directory; an existing directory is never overwritten')
-    parser.add_argument('--version', default='1.0.0')
+    parser.add_argument('--version', default='1.1.0')
     parser.add_argument('--iscc', type=Path, help='Inno Setup compiler path')
     parser.add_argument('--skip-installer', action='store_true')
     parser.add_argument('--app-only', action='store_true',
@@ -139,6 +140,7 @@ def main():
         if args.app_only:
             output.mkdir(parents=True)
             shutil.copy2(work / 'dist/StreamChromeServer.exe', output / 'StreamChromeServer.exe')
+            shutil.copy2(PROJECT / 'assets/app.ico', output / 'app.ico')
             print(f'Application only: {output / "StreamChromeServer.exe"}; external engines not included.')
             return
         portable = stage_release(work / 'dist/StreamChromeServer.exe', args.binaries_root.resolve(),

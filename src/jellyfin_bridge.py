@@ -7,6 +7,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import xml.etree.ElementTree as ET
 
 from process_guard import attach_to_server
 from subtitles import load_settings, save_settings
@@ -74,6 +75,7 @@ class JellyfinBridge:
                 return self.is_running()
             if self._process is not None and self._process.poll() is None:
                 return True
+            self._configure_http_port()
             args = [
                 str(self.exe),
                 '--datadir', str(self.data_dir),
@@ -91,6 +93,22 @@ class JellyfinBridge:
                 return True
             time.sleep(0.5)
         return self.is_running()
+
+    def _configure_http_port(self):
+        if not 1 <= self.port <= 65535:
+            raise ValueError('Invalid Jellyfin port.')
+        path = self.config_dir / 'network.xml'
+        parser = ET.XMLParser(target=ET.TreeBuilder(insert_comments=True))
+        tree = ET.parse(path, parser=parser) if path.exists() else ET.ElementTree(ET.Element('NetworkConfiguration'))
+        for name in ('InternalHttpPort', 'PublicHttpPort'):
+            field = tree.getroot().find(name)
+            if field is None:
+                field = ET.SubElement(tree.getroot(), name)
+            field.text = str(self.port)
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix('.xml.tmp')
+        tree.write(temporary, encoding='utf-8', xml_declaration=True)
+        temporary.replace(path)
 
     def stop(self):
         with self._lock:

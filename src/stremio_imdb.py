@@ -7,6 +7,7 @@ import json
 import re
 import secrets
 import threading
+import time
 from urllib.parse import quote, urlparse
 import urllib.error
 import urllib.request
@@ -373,6 +374,95 @@ class StremioAddonManager:
     def __init__(self, settings_path):
         self.settings_path = settings_path
         self._lock = threading.RLock()
+        self._discovery_cache = None
+
+    def _catalog_entries(self):
+        addons = self.list_addons()
+        sources = [{'url': CINEMETA_BASE + '/manifest.json', 'name': 'Cinemeta'}, *addons]
+        signature = tuple(str(source.get('url') or '') for source in sources)
+        with self._lock:
+            cached = self._discovery_cache
+            if cached and cached[0] == signature and time.monotonic() - cached[1] < 300:
+                return cached[2]
+
+        def read_source(source):
+            url = str(source.get('url') or '')
+            try:
+                manifest = _http_json(_normalize_manifest_url(url), timeout=12)
+            except ValueError:
+                return []
+            entries = []
+            for catalog in manifest.get('catalogs', []):
+                if not isinstance(catalog, dict):
+                    continue
+                kind, catalog_id = str(catalog.get('type') or ''), str(catalog.get('id') or '')
+                if not kind or not catalog_id:
+                    continue
+                extras = {str(extra.get('name')): extra for extra in catalog.get('extra', []) if isinstance(extra, dict)}
+                for name in catalog.get('extraSupported', []):
+                    extras.setdefault(str(name), {})
+                for name in catalog.get('extraRequired', []):
+                    extras.setdefault(str(name), {})['isRequired'] = True
+                genres = list(dict.fromkeys(str(g) for g in extras.get('genre', {}).get('options', []) if g))
+                key = hashlib.sha256(json.dumps([url, kind, catalog_id]).encode('utf-8')).hexdigest()[:24]
+                public = {
+                    'key': key, 'kind': kind,
+                    'name': str(catalog.get('name') or catalog_id)[:120],
+                    'source': str(source.get('name') or manifest.get('name') or 'Addon')[:80],
+                    'genres': genres, 'genre_filter': 'genre' in extras,
+                    'search': 'search' in extras,
+                    'required_filters': [name for name, extra in extras.items() if extra.get('isRequired')],
+                }
+                entries.append((public, url[:-len('/manifest.json')], catalog_id))
+            return entries
+
+        with ThreadPoolExecutor(max_workers=min(6, len(sources))) as pool:
+            entries = [entry for chunk in pool.map(read_source, sources) for entry in chunk]
+        with self._lock:
+            self._discovery_cache = (signature, time.monotonic(), entries)
+        return entries
+
+    def discovery_catalogs(self):
+        return [dict(entry[0]) for entry in self._catalog_entries()]
+
+    def discover_catalog(self, key, kind, genre='', search=''):
+        entry = next((entry for entry in self._catalog_entries() if entry[0]['key'] == key and entry[0]['kind'] == kind), None)
+        if not entry:
+            raise ValueError('Catalog unavailable. Reload Discover and select a catalog.')
+        catalog, base, catalog_id = entry
+        supplied = {'genre': str(genre or '').strip(), 'search': str(search or '').strip()}
+        for name in catalog['required_filters']:
+            if not supplied.get(name):
+                raise ValueError(f'This catalog requires a {name} filter.')
+        if supplied['genre'] and (not catalog['genre_filter'] or catalog['genres'] and supplied['genre'] not in catalog['genres']):
+            raise ValueError('This genre is not available for the selected catalog.')
+        if supplied['search'] and not catalog['search']:
+            raise ValueError('This catalog does not support search. Select a searchable catalog or clear the search.')
+        extras = '&'.join(f'{name}={quote(value, safe="")}' for name, value in supplied.items() if value)
+        endpoint = f'{base}/catalog/{quote(kind, safe="")}/{quote(catalog_id, safe="")}'
+        data = _http_json(endpoint + ('/' + extras if extras else '') + '.json')
+        items, seen = [], set()
+        for raw in data.get('metas', []):
+            if not isinstance(raw, dict):
+                continue
+            item_id = str(raw.get('id') or raw.get('imdb_id') or '').strip()
+            item_kind = str(raw.get('type') or kind)
+            if not item_id or (item_kind, item_id) in seen:
+                continue
+            seen.add((item_kind, item_id))
+            imdb_id = str(raw.get('imdb_id') or item_id)
+            playable = item_kind in ('movie', 'series') and bool(IMDB_ID_RE.fullmatch(imdb_id))
+            items.append({
+                'id': item_id, 'imdb_id': imdb_id if playable else '', 'kind': item_kind,
+                'title': str(raw.get('name') or raw.get('title') or item_id),
+                'year': str(raw.get('releaseInfo') or raw.get('year') or '')[:9],
+                'poster': str(raw.get('poster') or ''), 'imdb_rating': str(raw.get('imdbRating') or ''),
+                'genres': list(raw.get('genres') or [])[:3], 'playable': playable,
+                'stremio_url': f'stremio:///detail/{quote(item_kind, safe="")}/{quote(item_id, safe="")}',
+            })
+            if len(items) >= 48:
+                break
+        return items
 
     def _load(self):
         try:
