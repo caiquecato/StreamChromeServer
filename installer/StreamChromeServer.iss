@@ -1,5 +1,5 @@
 #ifndef ReleaseVersion
-#define ReleaseVersion "1.1.2"
+#define ReleaseVersion "1.1.3"
 #endif
 #ifndef OnlineMode
 #define OnlineMode 0

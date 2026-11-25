@@ -1,5 +1,6 @@
 """Direct HTTPS/Debrid library downloader into Movies and Series folders."""
 from concurrent.futures import ThreadPoolExecutor
+import http.client
 from pathlib import Path
 import re
 import secrets
@@ -17,7 +18,8 @@ VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.m4v', '.webm', '.ts', '.m2
 _INVALID_WIN_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _RESERVED_WIN_NAMES = {'CON', 'PRN', 'AUX', 'NUL', *(f'COM{i}' for i in range(1, 10)), *(f'LPT{i}' for i in range(1, 10))}
 _SEASON_EP_RE = re.compile(r'(?:S\d{1,2}E\d{1,3}|\b\d{1,2}x\d{1,3}\b)', re.I)
-CHUNK_BYTES = 1024 * 1024
+CHUNK_BYTES = 256 * 1024
+MAX_STALL_RETRIES = 15
 
 
 def _safe_win_name(text, fallback='Video', max_len=110):
@@ -194,56 +196,99 @@ class LibraryDownloadService:
 
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            resume_from = part.stat().st_size if part.is_file() else 0
-            req_headers = {'User-Agent': USER_AGENT, **job['headers']}
-            if resume_from > 0:
-                req_headers['Range'] = f'bytes={resume_from}-'
-            req = urllib.request.Request(job['url'], headers=req_headers)
-
             with self._lock:
                 job['state'] = 'downloading'
                 job['error'] = ''
 
-            with _open_media_stream(req, timeout=30) as resp:
-                # Interrupt the socket, not BufferedReader.close(), which waits on its read lock.
-                active_socket = getattr(getattr(getattr(resp, 'fp', None), 'raw', None), '_sock', None)
-                with self._lock:
-                    job['active_socket'] = active_socket
-                    stopping = cancel_ev.is_set()
-                if stopping and active_socket is not None:
-                    try:
-                        active_socket.shutdown(socket.SHUT_RDWR)
-                    except OSError:
-                        pass
-                status = getattr(resp, 'status', 200)
-                append_mode = status == 206 and resume_from > 0
-                downloaded = resume_from if append_mode else 0
-                total = _parse_total_from_headers(resp.headers, status, downloaded) or job['total']
-                with self._lock:
-                    job['downloaded'] = downloaded
-                    job['total'] = total
+            stalls = 0
+            last_error = ''
+            while not cancel_ev.is_set():
+                resume_from = part.stat().st_size if part.is_file() else 0
+                if job['total'] > 0 and resume_from >= job['total']:
+                    break
 
-                start_ts = time.monotonic()
-                session_bytes = 0
-                with part.open('ab' if append_mode else 'wb') as out:
-                    while True:
-                        if cancel_ev.is_set():
-                            break
-                        chunk = resp.read(CHUNK_BYTES)
-                        if not chunk:
-                            break
-                        out.write(chunk)
-                        session_bytes += len(chunk)
-                        downloaded += len(chunk)
-                        elapsed = max(0.05, time.monotonic() - start_ts)
-                        speed = int(session_bytes / elapsed)
-                        eta = int((total - downloaded) / speed) if (total > downloaded and speed > 0) else None
+                req_headers = {'User-Agent': USER_AGENT, **job['headers']}
+                if resume_from > 0:
+                    req_headers['Range'] = f'bytes={resume_from}-'
+                req = urllib.request.Request(job['url'], headers=req_headers)
+
+                progressed_bytes = 0
+                try:
+                    with _open_media_stream(req, timeout=15) as resp:
+                        # Interrupt the socket, not BufferedReader.close(), which waits on its read lock.
+                        active_socket = getattr(getattr(getattr(resp, 'fp', None), 'raw', None), '_sock', None)
+                        with self._lock:
+                            job['active_socket'] = active_socket
+                            stopping = cancel_ev.is_set()
+                        if stopping and active_socket is not None:
+                            try:
+                                active_socket.shutdown(socket.SHUT_RDWR)
+                            except OSError:
+                                pass
+                        status = getattr(resp, 'status', 200)
+                        append_mode = status == 206 and resume_from > 0
+                        downloaded = resume_from if append_mode else 0
+                        total = _parse_total_from_headers(resp.headers, status, downloaded) or job['total']
                         with self._lock:
                             job['downloaded'] = downloaded
-                            if total > 0:
-                                job['total'] = total
-                            job['speed'] = speed
-                            job['eta'] = eta
+                            job['total'] = total
+
+                        win_start = time.monotonic()
+                        win_bytes = 0
+                        with part.open('ab' if append_mode else 'wb') as out:
+                            while not cancel_ev.is_set():
+                                chunk = resp.read(CHUNK_BYTES)
+                                if not chunk:
+                                    break
+                                out.write(chunk)
+                                n = len(chunk)
+                                progressed_bytes += n
+                                win_bytes += n
+                                downloaded += n
+                                now = time.monotonic()
+                                elapsed = now - win_start
+                                if elapsed >= 0.35:
+                                    speed = int(win_bytes / elapsed)
+                                    win_start = now
+                                    win_bytes = 0
+                                else:
+                                    speed = int(win_bytes / max(0.05, elapsed))
+                                eta = int((total - downloaded) / speed) if (total > downloaded and speed > 0) else None
+                                with self._lock:
+                                    job['downloaded'] = downloaded
+                                    if total > 0:
+                                        job['total'] = total
+                                    job['speed'] = speed
+                                    job['eta'] = eta
+
+                        if cancel_ev.is_set():
+                            break
+                        if total <= 0 or downloaded >= total:
+                            break
+                        last_error = f'Connection closed at {downloaded}/{total} bytes.'
+                except urllib.error.HTTPError as err:
+                    if err.code in (416, 500, 502, 503, 504) and not cancel_ev.is_set():
+                        last_error = f'HTTP {err.code}'
+                    else:
+                        raise
+                except (urllib.error.URLError, http.client.HTTPException, TimeoutError, ssl.SSLError, OSError) as err:
+                    if cancel_ev.is_set():
+                        break
+                    last_error = str(err)[:160] or 'Connection interrupted.'
+                finally:
+                    with self._lock:
+                        job.pop('active_socket', None)
+
+                if progressed_bytes >= CHUNK_BYTES:
+                    stalls = 0
+                else:
+                    stalls += 1
+                if stalls >= MAX_STALL_RETRIES:
+                    raise ValueError(last_error or 'Download stalled after repeated retries.')
+                with self._lock:
+                    job.update(speed=0, eta=None)
+                if cancel_ev.wait(min(5.0, 0.5 + stalls * 0.5)):
+                    break
 
             if cancel_ev.is_set():
                 try:
@@ -264,7 +309,7 @@ class LibraryDownloadService:
         except urllib.error.HTTPError as err:
             with self._lock:
                 job.update(state='cancelled' if cancel_ev.is_set() else 'failed', speed=0, eta=None, error=f'HTTP {err.code}')
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as err:
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, ssl.SSLError, OSError, ValueError) as err:
             if cancel_ev.is_set():
                 try:
                     if not job.get('preserve_partial') and part.exists():

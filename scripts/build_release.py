@@ -108,7 +108,7 @@ def main():
                         help='Trusted engines directory; only allowlisted distribution files are read')
     parser.add_argument('--output', type=Path,
                         help='New output directory; an existing directory is never overwritten')
-    parser.add_argument('--version', default='1.1.2')
+    parser.add_argument('--version', default='1.1.3')
     parser.add_argument('--iscc', type=Path, help='Inno Setup compiler path')
     parser.add_argument('--skip-installer', action='store_true')
     parser.add_argument('--app-only', action='store_true',

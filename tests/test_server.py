@@ -371,5 +371,71 @@ class ServerTests(unittest.TestCase):
             cdn.server_close()
             cdn_thread.join()
 
+    def test_library_downloader_auto_resumes_after_timeout_and_eof(self):
+        from library_downloader import LibraryDownloadService
+        from stremio_imdb import register_addon_stream
+
+        full_data = b'MKV-START-' + (b'X' * 524288) + b'-MKV-END'
+        attempts = []
+
+        class FlakyResponse:
+            def __init__(self, start, chunk_limit=None, raise_timeout=False):
+                self.pos = start
+                self.limit = len(full_data) if chunk_limit is None else min(len(full_data), start + chunk_limit)
+                self.raise_timeout = raise_timeout
+                self.status = 206 if start > 0 else 200
+                self.headers = (
+                    {'Content-Range': f'bytes {start}-{len(full_data) - 1}/{len(full_data)}', 'Content-Length': str(len(full_data) - start)}
+                    if start > 0 else {'Content-Length': str(len(full_data))}
+                )
+                self.fp = None
+
+            def read(self, n):
+                if self.pos >= self.limit:
+                    if self.raise_timeout:
+                        raise TimeoutError('The read operation timed out')
+                    return b''
+                end = min(self.limit, self.pos + n)
+                out = full_data[self.pos:end]
+                self.pos = end
+                return out
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        def fake_open(req, timeout=15):
+            rng = req.headers.get('Range', '')
+            start = int(rng.split('=')[1].split('-')[0]) if rng.startswith('bytes=') else 0
+            attempts.append(start)
+            if len(attempts) == 1:
+                return FlakyResponse(start, chunk_limit=131072, raise_timeout=True)
+            if len(attempts) == 2:
+                return FlakyResponse(start, chunk_limit=131072, raise_timeout=False)
+            return FlakyResponse(start)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'StreamServer'
+            done = threading.Event()
+            dl = LibraryDownloadService(root, on_complete=lambda j: done.set())
+            tok = register_addon_stream({
+                'url': 'https://cdn.example.invalid/Godzilla.mkv',
+                'headers': {},
+                'ffmpeg_headers': '',
+                'filename': 'Godzilla.mkv',
+                'video_size': len(full_data),
+                'video_id': 'tt23289160',
+                'kind': 'movie',
+                'imdb_id': 'tt23289160',
+            })
+            with patch('library_downloader._open_media_stream', side_effect=fake_open):
+                job = dl.enqueue_from_token({'stream_token': tok, 'kind': 'movie', 'title': 'Godzilla Minus One', 'year': '2023'})
+                self.assertTrue(done.wait(10))
+            self.assertEqual(attempts, [0, 131072, 262144])
+            saved = root / job['rel_path']
+            self.assertEqual(saved.read_bytes(), full_data)
+
 if __name__ == '__main__':
     unittest.main()
