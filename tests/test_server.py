@@ -437,5 +437,83 @@ class ServerTests(unittest.TestCase):
             saved = root / job['rel_path']
             self.assertEqual(saved.read_bytes(), full_data)
 
+    def test_library_downloader_parallel_range_orders_blocks_and_resumes(self):
+        import library_downloader
+        from stremio_imdb import register_addon_stream
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            done = threading.Event()
+            dl = library_downloader.LibraryDownloadService(root, on_complete=lambda job: done.set())
+            full_data = bytes((i * 37) % 251 for i in range(250_000))
+            tok = register_addon_stream({
+                'url': 'https://cdn.example.invalid/parallel.mkv',
+                'headers': {},
+                'ffmpeg_headers': '',
+                'filename': 'Parallel Movie.mkv',
+                'video_size': len(full_data),
+                'video_id': 'tt99999991',
+                'kind': 'movie',
+                'imdb_id': 'tt99999991',
+            })
+            lock = threading.Lock()
+            seen_ranges = []
+            retried_block = [False]
+
+            class FakeResp:
+                def __init__(self, chunk, start, end, total):
+                    self.status = 206
+                    self.headers = {
+                        'Accept-Ranges': 'bytes',
+                        'Content-Range': f'bytes {start}-{end}/{total}',
+                        'Content-Length': str(len(chunk)),
+                    }
+                    self._pos = 0
+                    self._chunk = chunk
+
+                def read(self, n=-1):
+                    if self._pos >= len(self._chunk):
+                        return b''
+                    if n is None or n < 0:
+                        n = len(self._chunk) - self._pos
+                    out = self._chunk[self._pos:self._pos + n]
+                    self._pos += len(out)
+                    return out
+
+                def close(self):
+                    return None
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+            def fake_open(req, timeout=60):
+                rng = str(req.get_header('Range') or '')
+                if not rng.startswith('bytes='):
+                    raise AssertionError(f'expected Range header, got {req.headers}')
+                spec = rng.split('=', 1)[1]
+                s_str, e_str = spec.split('-', 1)
+                start = int(s_str)
+                end = int(e_str) if e_str else len(full_data) - 1
+                with lock:
+                    seen_ranges.append((start, end))
+                    if start == 65536 and end > 65536 and not retried_block[0]:
+                        retried_block[0] = True
+                        raise TimeoutError('simulated block timeout')
+                if start == 0 and end > 0:
+                    time.sleep(0.05)
+                return FakeResp(full_data[start:end + 1], start, end, len(full_data))
+
+            with patch.object(library_downloader, 'PARALLEL_MIN_BYTES', 200_000), \
+                 patch.object(library_downloader, 'PARALLEL_BLOCK_BYTES', 65_536), \
+                 patch('library_downloader._open_media_stream', side_effect=fake_open):
+                job = dl.enqueue_from_token({'stream_token': tok, 'kind': 'movie', 'title': 'Parallel Movie', 'year': '2024'})
+                self.assertTrue(done.wait(10))
+            self.assertTrue(retried_block[0])
+            self.assertEqual(dl.list_jobs()[0]['state'], 'complete')
+            saved = root / job['rel_path']
+            self.assertEqual(saved.read_bytes(), full_data)
+
 if __name__ == '__main__':
     unittest.main()

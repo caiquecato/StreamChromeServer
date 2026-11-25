@@ -43,7 +43,7 @@ def dependency_entries(entries):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--version', default='1.1.4')
+    parser.add_argument('--version', default='1.1.5')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--app-exe', type=Path, help='Use an already verified application build')
     args = parser.parse_args()

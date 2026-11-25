@@ -22,6 +22,10 @@ _SEASON_EP_RE = re.compile(r'(?:S\d{1,2}E\d{1,3}|\b\d{1,2}x\d{1,3}\b)', re.I)
 CHUNK_BYTES = 256 * 1024
 DISK_BUFFER_BYTES = 4 * 1024 * 1024
 QUEUE_CHUNKS = 48
+PARALLEL_BLOCK_BYTES = 4 * 1024 * 1024
+PARALLEL_MIN_BYTES = 8 * 1024 * 1024
+PARALLEL_WORKERS = 6
+PARALLEL_MAX_BUFFER_BLOCKS = 12
 MAX_STALL_RETRIES = 15
 DOWNLOAD_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 
@@ -189,6 +193,170 @@ class LibraryDownloadService:
             self._executor.submit(self._run_job, job)
             return self._serialize(job)
 
+    def _probe_range_support(self, job, cancel_ev):
+        if job['total'] > 0 and job['total'] < PARALLEL_MIN_BYTES:
+            return False, job['total']
+        req = urllib.request.Request(
+            job['url'],
+            headers={'User-Agent': DOWNLOAD_USER_AGENT, **job['headers'], 'Range': 'bytes=0-0'},
+        )
+        try:
+            with _open_media_stream(req, timeout=12) as resp:
+                status = getattr(resp, 'status', 200)
+                total = _parse_total_from_headers(resp.headers, status, 0) or job['total']
+                return (status == 206 and total >= PARALLEL_MIN_BYTES), total
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, ssl.SSLError, OSError):
+            return False, job['total']
+
+    def _run_parallel_range_job(self, job, part, resume_from, total, cancel_ev):
+        remaining = total - resume_from
+        num_blocks = (remaining + PARALLEL_BLOCK_BYTES - 1) // PARALLEL_BLOCK_BYTES
+        if num_blocks <= 1:
+            return False
+
+        with self._lock:
+            job['downloaded'] = resume_from
+            job['total'] = total
+
+        state_lock = threading.Lock()
+        cond = threading.Condition(state_lock)
+        next_fetch_idx = 0
+        next_write_idx = 0
+        ready_blocks = {}
+        worker_errors = []
+        downloaded_live = resume_from
+        win_start = time.monotonic()
+        win_bytes = 0
+
+        def _register_socket(sock):
+            if sock is None:
+                return
+            with self._lock:
+                job.setdefault('active_sockets', set()).add(sock)
+                stopping = cancel_ev.is_set()
+            if stopping:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+        def _unregister_socket(sock):
+            if sock is None:
+                return
+            with self._lock:
+                socks = job.get('active_sockets')
+                if socks:
+                    socks.discard(sock)
+
+        def _fetch_block(idx):
+            start = resume_from + idx * PARALLEL_BLOCK_BYTES
+            end = min(total - 1, start + PARALLEL_BLOCK_BYTES - 1)
+            expected = end - start + 1
+            for attempt in range(8):
+                if cancel_ev.is_set():
+                    return None
+                buf = bytearray()
+                sock = None
+                try:
+                    req = urllib.request.Request(
+                        job['url'],
+                        headers={'User-Agent': DOWNLOAD_USER_AGENT, **job['headers'], 'Range': f'bytes={start}-{end}'},
+                    )
+                    with _open_media_stream(req, timeout=15) as resp:
+                        if getattr(resp, 'status', 200) != 206:
+                            raise ValueError(f'Expected HTTP 206, got {getattr(resp, "status", 200)}')
+                        sock = getattr(getattr(getattr(resp, 'fp', None), 'raw', None), '_sock', None)
+                        _register_socket(sock)
+                        while len(buf) < expected and not cancel_ev.is_set():
+                            chunk = resp.read(min(CHUNK_BYTES, expected - len(buf)))
+                            if not chunk:
+                                break
+                            buf.extend(chunk)
+                    if cancel_ev.is_set():
+                        return None
+                    if len(buf) == expected:
+                        return bytes(buf)
+                except urllib.error.HTTPError as err:
+                    if err.code not in (429, 500, 502, 503, 504) or attempt == 7:
+                        raise
+                except (urllib.error.URLError, http.client.HTTPException, TimeoutError, ssl.SSLError, OSError, ValueError):
+                    if attempt == 7:
+                        raise
+                finally:
+                    _unregister_socket(sock)
+                if cancel_ev.wait(min(4.0, 0.4 + attempt * 0.5)):
+                    return None
+            raise ValueError(f'Block {idx} failed after retries.')
+
+        def _worker():
+            nonlocal next_fetch_idx, downloaded_live, win_start, win_bytes
+            try:
+                while not cancel_ev.is_set():
+                    with cond:
+                        while (
+                            not cancel_ev.is_set()
+                            and not worker_errors
+                            and next_fetch_idx < num_blocks
+                            and (next_fetch_idx - next_write_idx) >= PARALLEL_MAX_BUFFER_BLOCKS
+                        ):
+                            cond.wait(timeout=0.3)
+                        if cancel_ev.is_set() or worker_errors or next_fetch_idx >= num_blocks:
+                            return
+                        idx = next_fetch_idx
+                        next_fetch_idx += 1
+                    data = _fetch_block(idx)
+                    if data is None:
+                        return
+                    with cond:
+                        ready_blocks[idx] = data
+                        downloaded_live += len(data)
+                        win_bytes += len(data)
+                        now = time.monotonic()
+                        elapsed = now - win_start
+                        if elapsed >= 0.4:
+                            speed = int(win_bytes / elapsed)
+                            win_start = now
+                            win_bytes = 0
+                        else:
+                            speed = int(win_bytes / max(0.05, elapsed))
+                        eta = int((total - downloaded_live) / speed) if (total > downloaded_live and speed > 0) else None
+                        with self._lock:
+                            job['downloaded'] = min(total, downloaded_live)
+                            job['speed'] = speed
+                            job['eta'] = eta
+                        cond.notify_all()
+            except Exception as exc:
+                with cond:
+                    worker_errors.append(exc)
+                    cond.notify_all()
+
+        threads = [threading.Thread(target=_worker, daemon=True) for _ in range(min(PARALLEL_WORKERS, num_blocks))]
+        for th in threads:
+            th.start()
+
+        try:
+            with part.open('ab' if resume_from > 0 else 'wb', buffering=DISK_BUFFER_BYTES) as out:
+                while next_write_idx < num_blocks and not cancel_ev.is_set():
+                    with cond:
+                        while next_write_idx not in ready_blocks and not worker_errors and not cancel_ev.is_set():
+                            cond.wait(timeout=0.3)
+                        if cancel_ev.is_set():
+                            break
+                        if worker_errors and next_write_idx not in ready_blocks:
+                            raise worker_errors[0]
+                        data = ready_blocks.pop(next_write_idx)
+                        next_write_idx += 1
+                        cond.notify_all()
+                    out.write(data)
+        finally:
+            with cond:
+                cond.notify_all()
+            for th in threads:
+                th.join(timeout=5)
+        if worker_errors and not cancel_ev.is_set():
+            raise worker_errors[0]
+        return True
+
     def _run_job(self, job):
         target = job['target_path']
         part = target.with_name(target.name + '.part')
@@ -203,6 +371,36 @@ class LibraryDownloadService:
             with self._lock:
                 job['state'] = 'downloading'
                 job['error'] = ''
+
+            resume_initial = part.stat().st_size if part.is_file() else 0
+            if job['total'] > 0 and resume_initial >= job['total']:
+                part.replace(target)
+                final_size = target.stat().st_size
+                with self._lock:
+                    job.update(state='complete', downloaded=final_size, total=max(job['total'], final_size), speed=0, eta=0)
+                if callable(self.on_complete):
+                    self.on_complete(dict(job))
+                return
+
+            range_ok, probed_total = self._probe_range_support(job, cancel_ev)
+            if range_ok and probed_total >= PARALLEL_MIN_BYTES and not cancel_ev.is_set():
+                if self._run_parallel_range_job(job, part, resume_initial, probed_total, cancel_ev):
+                    if cancel_ev.is_set():
+                        try:
+                            if not job.get('preserve_partial') and part.exists():
+                                part.unlink()
+                        except OSError:
+                            pass
+                        with self._lock:
+                            job.update(state='cancelled', speed=0, eta=None)
+                        return
+                    part.replace(target)
+                    final_size = target.stat().st_size
+                    with self._lock:
+                        job.update(state='complete', downloaded=final_size, total=max(job['total'], final_size), speed=0, eta=0)
+                    if callable(self.on_complete):
+                        self.on_complete(dict(job))
+                    return
 
             stalls = 0
             last_error = ''
@@ -382,6 +580,8 @@ class LibraryDownloadService:
                         job['state'] = 'cancelled'
                     if job.get('active_socket') is not None:
                         sockets.append(job['active_socket'])
+                    for s in job.get('active_sockets') or ():
+                        sockets.append(s)
         self._executor.shutdown(wait=False, cancel_futures=True)
         for connection in sockets:
             try:
