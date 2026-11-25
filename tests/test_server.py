@@ -190,6 +190,23 @@ class ServerTests(unittest.TestCase):
                     conn.close()
                     self.assertEqual(resp.status, 200)
                     self.assertEqual(self.request('/api/settings', extra_headers={**ext_hdr, 'Cookie': cookie})[0], 200)
+                    remote_headers = {**ext_hdr, 'Cookie': cookie}
+                    with patch.object(server.JELLYFIN, 'status', return_value={'port': 8096}), \
+                         patch.object(server.JELLYFIN, 'current_password', return_value='dummy-private-password') as password, \
+                         patch.object(server, 'detect_nvenc', return_value=False), \
+                         patch.object(server, 'get_lan_ipv4', return_value='192.168.1.3'):
+                        status, body = self.request('/api/network/info', extra_headers=remote_headers)
+                        self.assertEqual(status, 200)
+                        self.assertNotIn(b'dummy-private-password', body)
+                        password.assert_not_called()
+                    with patch.object(server, 'choose_local_video', return_value='') as dialog, \
+                         patch.object(server.SUBTITLES, 'configure', return_value={}) as configure, \
+                         patch.object(server.ADDONS, 'add_addon', return_value=[]) as addons:
+                        for path in ('/api/local/open', '/api/settings', '/api/stremio/addons'):
+                            self.assertEqual(self.request(path, {}, remote_headers)[0], 403, path)
+                        dialog.assert_not_called()
+                        configure.assert_not_called()
+                        addons.assert_not_called()
             finally:
                 self.httpd.lan_mode = prev_lan
 

@@ -5,6 +5,8 @@ historico/
 dist/
 build/
 data/
+/Filmes/
+/Series/
 posters/
 *.exe
 *.spec
@@ -19,5 +21,6 @@ dados_brutos/
 planilhas/
 docs/plano*
 docs/README.md
+docs/retomada_antigravity.md
 installer/ffmpeg/
 installer/yt-dlp/

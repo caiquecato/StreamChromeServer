@@ -7,6 +7,7 @@
     <title>StreamChrome Server</title>
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="stylesheet" href="/player.css"><link rel="stylesheet" href="/layouts.css"><link rel="stylesheet" href="/hub.css">
+<link rel="stylesheet" href="/series.css">
 </head>
 <body data-panel-open="false" data-view="catalog" data-has-media="false">
 
@@ -21,7 +22,7 @@
             <label class="field"> <span data-i18n="Language">Language</span> <select id="uiLanguage" aria-label="Language" onchange="AppUI.update({language:this.value})" data-i18n-aria="Language"><option value="en">English</option><option value="pt">Português</option><option value="es">Español</option></select></label>
         </div></details>
         <button class="theme-toggle" id="themeToggle" hidden onclick="AppUI.toggleTheme()" aria-label="Switch to light theme"></button>
-        <button class="exit-player" id="exitPlayerButton" hidden onclick="exitPlayer()" title="Exit player" data-i18n-title="Exit player"><span data-i18n="Exit">Exit</span></button>
+        <button class="exit-player" id="exitPlayerButton" onclick="exitPlayer()" title="Close server" data-i18n-title="Close server"><span data-i18n="Exit">Exit</span></button>
     </div>
 </header>
 
@@ -34,12 +35,18 @@
         <div class="hub-modal" role="dialog" aria-modal="true" aria-labelledby="hubModalTitle">
             <div class="hub-modal-header">
                 <h2 id="hubModalTitle"></h2>
-                <button type="button" class="btn btn-vlc" onclick="closeHubModal()" data-i18n="Close">Close</button>
+                <button id="hubModalClose" type="button" class="btn btn-vlc" onclick="closeHubModal()" data-i18n="Close">Close</button>
             </div>
             <div class="hub-modal-body" id="hubModalBody"></div>
         </div>
     </div>
 
+    <div class="hub-modal-backdrop hub-sub-modal-backdrop" id="hubSubModalBackdrop" hidden onclick="if(event.target===this)closeHubSubModal()">
+        <div class="hub-modal" role="dialog" aria-modal="true" aria-labelledby="hubSubModalTitle">
+            <div class="hub-modal-header"><h2 id="hubSubModalTitle"></h2><button id="hubSubModalClose" type="button" class="btn btn-vlc" onclick="closeHubSubModal()" data-i18n="Close">Close</button></div>
+            <div class="hub-modal-body" id="hubSubModalBody"></div>
+        </div>
+    </div>
     <div class="workspace">
 <nav class="studio-rail" aria-label="Playback" data-i18n-aria="Playback"><button class="header-action" onclick="openMediaPanel(&#x27;url&#x27;)" aria-label="File" title="File" data-i18n-title="File" data-i18n-aria="File"><svg viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 7h7l2 2h9v11H3z"></path><path d="M3 7V4h7l2 3"></path></svg><span data-i18n="File">File</span></button><button class="header-action" onclick="setSidePanel(&#x27;subtitle&#x27;)" aria-label="Subtitles" title="Subtitles" data-i18n-title="Subtitles" data-i18n-aria="Subtitles"><svg viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M6 10h5m2 0h5M6 14h7m2 0h3"></path></svg><span data-i18n="Subtitles">Subtitles</span></button></nav><nav class="session-shelf" aria-label="Current session" data-i18n-aria="Current session"><h2 data-i18n="Current session">Current session</h2><div class="session-poster" aria-hidden="true"><img id="sessionThumbnail" alt="" hidden><svg viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 7h7l2 2h9v11H3z"></path><path d="M3 7V4h7l2 3"></path></svg></div><div class="session-title" id="sessionTitle" data-i18n="No file open">No file open</div><div class="session-codec" id="sessionCodec"></div><div class="session-actions"><button class="header-action" onclick="openLocalVideo()" aria-label="Open file" title="Open file" data-open-file data-i18n-title="Open file" data-i18n-aria="Open file"><svg viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 7h7l2 2h9v11H3z"></path><path d="M3 7V4h7l2 3"></path></svg><span data-i18n="Open file">Open file</span></button><button class="header-action" onclick="openMediaPanel(&#x27;url&#x27;)" aria-label="Open URL" title="Open URL" data-i18n-title="Open URL" data-i18n-aria="Open URL"><svg viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m9 15 6-6M8 17l-2 2a4 4 0 0 1-5-5l5-5a4 4 0 0 1 5 0m2 6a4 4 0 0 0 5 0l5-5a4 4 0 0 0-5-5l-2 2"></path></svg><span data-i18n="Open URL">Open URL</span></button></div></nav>
         <main class="watch-column">
@@ -328,6 +335,7 @@
             source = job?.source || source;
         }
         if (source !== currentLoadedUrl) {
+            window.dispatchEvent?.(new CustomEvent('streamchrome:source-changing'));
             video.pause();
             video.removeAttribute('src');
             video.load();
@@ -352,7 +360,7 @@
                 movieTotalDuration = data.duration || 0;
                 AppUI.text(mediaTitleBar, data.filename);
                 if ($('miniplayerTitle')) $('miniplayerTitle').textContent = data.filename || '';
-                if (window.dispatchEvent) window.dispatchEvent(new CustomEvent('streamchrome:media', {detail:data}));
+                if (window.dispatchEvent) window.dispatchEvent(new CustomEvent('streamchrome:media', {detail:{...data, source}}));
                 AppUI.text($('sessionTitle'), data.filename);
                 $('sessionCodec').textContent = (data.video_codec || '').toUpperCase();
                 mediaTitleBar.style.display = 'block';
@@ -757,6 +765,6 @@
     }
 </script>
 
-<script src="/presentation.js"></script><script src="/downloads.js"></script><script src="/qrcode.js"></script><script src="/hub.js"></script>
+<script src="/presentation.js"></script><script src="/downloads.js"></script><script src="/qrcode.js"></script><script src="/season_queue.js"></script><script src="/hub.js"></script>
 </body>
 </html>

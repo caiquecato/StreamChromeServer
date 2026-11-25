@@ -20,13 +20,13 @@ from urllib.parse import urlparse, parse_qs, unquote
 import webbrowser
 import urllib.request
 
-from process_guard import attach_to_server
+from process_guard import attach_to_server, run_managed
 from downloads import DownloadService
 from subtitles import SubtitleService, ProviderError, load_settings, http_json, http_bytes, to_vtt, guess_search
 from catalog_service import CatalogService
 from jellyfin_bridge import JellyfinBridge
 from remote_access import RemoteAccessService, is_autostart_enabled, is_loopback_client, is_private_or_loopback, render_pin_gate_html, set_autostart
-from stremio_imdb import StremioAddonManager, discover as imdb_discover, get_addon_stream, get_meta as imdb_get_meta
+from stremio_imdb import StremioAddonManager, discover as imdb_discover, get_addon_stream, get_genres as imdb_genres, get_meta as imdb_get_meta
 from library_downloader import LibraryDownloadService
 
 class HTTPServer(ThreadingHTTPServer):
@@ -36,15 +36,45 @@ class HTTPServer(ThreadingHTTPServer):
 
 HOST, PORT = '127.0.0.1', 8780
 APP_DIRECTORY = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent.parent
-ENGINE_DIR = APP_DIRECTORY.parent if APP_DIRECTORY.parent.name == 'app' else APP_DIRECTORY
-SERVER_ROOT = ENGINE_DIR.parent if APP_DIRECTORY.parent.name == 'app' else APP_DIRECTORY
-DATA_DIR = (ENGINE_DIR / 'data') if (ENGINE_DIR / 'data').is_dir() else (APP_DIRECTORY / 'data')
+
+
+def _resolve_layout(exe_dir):
+    if (exe_dir / 'app').is_dir():
+        engine = exe_dir / 'app'
+        return exe_dir, engine, engine / 'data'
+    if exe_dir.parent.name == 'app':
+        engine = exe_dir.parent
+        return engine.parent, engine, engine / 'data'
+    if (exe_dir / 'src' / 'server_pro.py').is_file():
+        return exe_dir, exe_dir, exe_dir / 'data'
+    # Standard Windows install: binaries in Program folder, library + data in user profile.
+    data = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'StreamChromeServer'
+    root_file = exe_dir / 'library_root.txt'
+    root = Path.home() / 'Videos' / 'StreamChromeServer'
+    if root_file.is_file():
+        try:
+            text = root_file.read_text(encoding='utf-8').strip()
+            if text:
+                root = Path(text)
+        except OSError:
+            pass
+    return root, exe_dir, data
+
+
+SERVER_ROOT, ENGINE_DIR, DATA_DIR = _resolve_layout(APP_DIRECTORY)
+for _d in (DATA_DIR, SERVER_ROOT / 'Filmes', SERVER_ROOT / 'Series'):
+    try:
+        _d.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
 SETTINGS_DAT = DATA_DIR / 'server_settings.dat'
+SUBTITLE_SETTINGS_DAT = DATA_DIR / 'subtitle_settings.dat'
 
 def find_media_tool(name):
     for candidate in (
         ENGINE_DIR / 'ffmpeg' / (name + '.exe'),
         APP_DIRECTORY / 'ffmpeg' / (name + '.exe'),
+        *sorted((ENGINE_DIR / 'ffmpeg').glob('ffmpeg-*/bin/' + name + '.exe')),
         Path(r'C:\Program Files\FFmpeg\bin') / (name + '.exe'),
     ):
         if candidate.is_file():
@@ -61,7 +91,8 @@ DOWNLOADS = DownloadService(_YTDLP_EXE, FFMPEG_BIN, destination=_DEFAULT_DEST)
 CATALOG = CatalogService(SERVER_ROOT, DATA_DIR, FFMPEG_BIN, FFPROBE_BIN)
 REMOTE = RemoteAccessService(SETTINGS_DAT, ENGINE_DIR / 'cloudflared' / 'cloudflared.exe', hub_port=PORT, jellyfin_port=8096)
 ADDONS = StremioAddonManager(SETTINGS_DAT)
-JELLYFIN = JellyfinBridge(ENGINE_DIR / 'jellyfin', FFMPEG_BIN, DATA_DIR / 'jellyfin_link.json', SETTINGS_DAT, port=8096)
+JELLYFIN = JellyfinBridge(ENGINE_DIR / 'jellyfin', FFMPEG_BIN, DATA_DIR / 'jellyfin_link.json', SETTINGS_DAT, port=8096,
+                          runtime_dir=None if DATA_DIR == ENGINE_DIR / 'data' else DATA_DIR / 'jellyfin')
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
 VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.m4v', '.webm', '.ts', '.m2ts', '.mpg', '.mpeg', '.wmv'}
 LOCAL_FILES = OrderedDict()
@@ -92,10 +123,10 @@ def _on_library_download_complete(job):
 
 LIBRARY_DOWNLOADS = LibraryDownloadService(SERVER_ROOT, on_complete=_on_library_download_complete)
 try:
-    SUBTITLES = SubtitleService(load_settings())
+    SUBTITLES = SubtitleService(load_settings(SUBTITLE_SETTINGS_DAT), settings_path=SUBTITLE_SETTINGS_DAT)
 except (ValueError, OSError):
     print('Could not read the protected settings. Configure the keys again in the interface.')
-    SUBTITLES = SubtitleService({})
+    SUBTITLES = SubtitleService({}, settings_path=SUBTITLE_SETTINGS_DAT)
 
 
 def find_application(name, folders):
@@ -164,7 +195,7 @@ def choose_local_video():
             root.iconbitmap(str(icon_file))
         root.attributes('-topmost', True)
         try:
-            return filedialog.askopenfilename(parent=root, title='Open video in StreamChromePro', filetypes=[('Videos', ' '.join('*' + extension for extension in sorted(VIDEO_EXTENSIONS))), ('All files', '*.*')])
+            return filedialog.askopenfilename(parent=root, title='Open video in StreamChrome Server', filetypes=[('Videos', ' '.join('*' + extension for extension in sorted(VIDEO_EXTENSIONS))), ('All files', '*.*')])
         finally:
             root.destroy()
 
@@ -175,7 +206,7 @@ def probe_media(source, headers=''):
             return PROBE_CACHE[source]
         effective_headers = headers or STREAM_HEADERS.get(source, '')
     try:
-        result = subprocess.run([FFPROBE_BIN, '-v', 'error', '-show_entries', 'format=duration:stream=index,codec_name,codec_type,width,height:stream_tags=language,title', '-of', 'json'] + (['-headers', effective_headers] if effective_headers else []) + [source], stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=25, creationflags=NO_WINDOW)
+        result = run_managed([FFPROBE_BIN, '-v', 'error', '-show_entries', 'format=duration:stream=index,codec_name,codec_type,width,height:stream_tags=language,title', '-of', 'json'] + (['-headers', effective_headers] if effective_headers else []) + [source], stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=25, creationflags=NO_WINDOW)
     except FileNotFoundError:
         raise ValueError('FFprobe not found. Install FFmpeg to play videos.') from None
     except subprocess.TimeoutExpired:
@@ -268,7 +299,7 @@ def detect_nvenc():
     if _NVENC_CACHE is not None:
         return _NVENC_CACHE
     try:
-        res = subprocess.run([FFMPEG_BIN, '-hide_banner', '-encoders'], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=6, creationflags=NO_WINDOW)
+        res = run_managed([FFMPEG_BIN, '-hide_banner', '-encoders'], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=6, creationflags=NO_WINDOW)
         _NVENC_CACHE = 'h264_nvenc' in res.stdout
     except (OSError, subprocess.TimeoutExpired):
         _NVENC_CACHE = False
@@ -312,7 +343,7 @@ def build_stream_command(source, metadata, seek, audio='', compatibility=False, 
 def seek_start(source, requested):
     if requested <= 0:
         return 0.0
-    result = subprocess.run([FFPROBE_BIN, '-v', 'error', '-select_streams', 'v:0', '-read_intervals', f'{requested}%+#1', '-show_packets', '-show_entries', 'packet=pts_time', '-of', 'json'] + (['-headers', PROBE_CACHE.get(source, {}).get('headers')] if PROBE_CACHE.get(source, {}).get('headers') else []) + [source], stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding='utf-8', timeout=15, creationflags=NO_WINDOW)
+    result = run_managed([FFPROBE_BIN, '-v', 'error', '-select_streams', 'v:0', '-read_intervals', f'{requested}%+#1', '-show_packets', '-show_entries', 'packet=pts_time', '-of', 'json'] + (['-headers', PROBE_CACHE.get(source, {}).get('headers')] if PROBE_CACHE.get(source, {}).get('headers') else []) + [source], stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding='utf-8', timeout=15, creationflags=NO_WINDOW)
     if result.returncode:
         raise ValueError('Could not locate the video position. Try again.')
     packets = json.loads(result.stdout).get('packets', [])
@@ -372,7 +403,7 @@ def save_library_subtitle(source, subtitle_id, language='pt-BR'):
     video_path = Path(resolve_target_url(str(source or ''))).resolve()
     root = CATALOG.server_root
     if not video_path.is_relative_to(root):
-        raise ValueError('Save subtitles only for videos inside the D:\\ library.')
+        raise ValueError('Save subtitles only for videos inside your library.')
     vtt_content = SUBTITLES.download(str(subtitle_id or ''))
     safe_lang = re.sub(r'[^a-zA-Z0-9_-]+', '', str(language or 'pt-BR')) or 'pt-BR'
     target = video_path.with_name(f'{video_path.stem}.{safe_lang}.vtt').resolve()
@@ -456,6 +487,9 @@ class StreamProHandler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def is_host_client(self):
+        return is_loopback_client(self.client_address[0]) and not REMOTE.is_external_request(self.headers, self.client_address[0])
+
     def check_remote_pin(self, parsed_path):
         if parsed_path == '/api/remote/auth':
             return True
@@ -479,7 +513,7 @@ class StreamProHandler(BaseHTTPRequestHandler):
         try:
             if parsed.path in ('/', '/index.html'):
                 self.serve_asset()
-            elif parsed.path in ('/player_helpers.js', '/player.css', '/layouts.css', '/appearance.js', '/i18n.js', '/presentation.js', '/downloads.js', '/hub.css', '/hub.js', '/qrcode.js', '/manifest.webmanifest'):
+            elif parsed.path in ('/player_helpers.js', '/player.css', '/layouts.css', '/appearance.js', '/i18n.js', '/presentation.js', '/downloads.js', '/hub.css', '/hub.js', '/series.css', '/season_queue.js', '/qrcode.js', '/manifest.webmanifest'):
                 self.serve_asset(parsed.path[1:])
             elif parsed.path.startswith('/api/poster/'):
                 poster_file = unquote(parsed.path[len('/api/poster/'):])
@@ -500,7 +534,11 @@ class StreamProHandler(BaseHTTPRequestHandler):
                 sub_path = CATALOG.resolve_sidecar_path(query.get('id', [''])[0])
                 self.send_bytes(to_vtt(sub_path.read_bytes()).encode('utf-8'), 'text/vtt; charset=utf-8')
             elif parsed.path == '/api/discover':
-                self.send_json({'items': imdb_discover(query.get('kind', ['movie'])[0], query.get('catalog', ['top'])[0], query.get('q', [''])[0])})
+                d_kind = query.get('kind', ['movie'])[0]
+                self.send_json({
+                    'items': imdb_discover(d_kind, query.get('catalog', ['top'])[0], query.get('q', [''])[0], query.get('genre', [''])[0]),
+                    'genres': imdb_genres(d_kind),
+                })
             elif parsed.path == '/api/imdb/meta':
                 kind = query.get('kind', ['movie'])[0]
                 imdb_id = query.get('id', [''])[0]
@@ -522,7 +560,7 @@ class StreamProHandler(BaseHTTPRequestHandler):
             elif parsed.path == '/api/network/info':
                 lan_ip = get_lan_ipv4()
                 jf = JELLYFIN.status()
-                if is_loopback_client(self.client_address[0]):
+                if self.is_host_client():
                     jf['jellyfin_password'] = JELLYFIN.current_password()
                 rem = REMOTE.status()
                 port = self.server.server_address[1]
@@ -547,7 +585,7 @@ class StreamProHandler(BaseHTTPRequestHandler):
             elif parsed.path == '/api/settings':
                 self.send_json(SUBTITLES.status())
             elif parsed.path == '/api/status':
-                self.send_json({'version': '2.5.0', 'ffmpeg': bool(shutil.which(FFMPEG_BIN) or Path(FFMPEG_BIN).is_file()), 'ffprobe': bool(shutil.which(FFPROBE_BIN) or Path(FFPROBE_BIN).is_file()), 'lan': bool(getattr(self.server, 'lan_mode', False))})
+                self.send_json({'version': '1.0.0', 'ffmpeg': bool(shutil.which(FFMPEG_BIN) or Path(FFMPEG_BIN).is_file()), 'ffprobe': bool(shutil.which(FFPROBE_BIN) or Path(FFPROBE_BIN).is_file()), 'lan': bool(getattr(self.server, 'lan_mode', False))})
             elif parsed.path == '/api/inspect':
                 raw = query.get('url', [''])[0]
                 addon_info = get_addon_stream(raw) if raw.startswith('addon:') else None
@@ -611,10 +649,11 @@ class StreamProHandler(BaseHTTPRequestHandler):
                 raise ValueError('Invalid data.')
             host_only_routes = {
                 '/api/local/open', '/api/download/folder', '/api/vlc', '/api/shutdown',
+                '/api/settings', '/api/stremio/addons',
                 '/api/system/open-folder', '/api/system/autostart', '/api/system/firewall',
                 '/api/remote/pin', '/api/remote/toggle', '/api/jellyfin/password',
             }
-            if path in host_only_routes and not is_loopback_client(self.client_address[0]):
+            if path in host_only_routes and not self.is_host_client():
                 self.send_json({'error': 'Available only on the host PC.'}, 403)
                 return
             if path == '/api/remote/auth':
@@ -636,10 +675,6 @@ class StreamProHandler(BaseHTTPRequestHandler):
                 self.send_json({'ok': JELLYFIN.refresh_library()})
             elif path == '/api/system/open-folder':
                 self.send_json(open_media_folder(data.get('folder', 'movies')))
-            elif path == '/api/system/autostart':
-                cmd = f'"{Path(sys.executable).with_name("pythonw.exe")}" "{Path(__file__).resolve()}" --background'
-                enabled = set_autostart(bool(data.get('enabled')), cmd)
-                self.send_json({'autostart': enabled})
             elif path == '/api/system/firewall':
                 self.send_json(trigger_firewall_rule())
             elif path == '/api/catalog/scan':
@@ -721,7 +756,7 @@ class StreamProHandler(BaseHTTPRequestHandler):
                 self.send_json({'source':'local:' + token,'filename':downloaded.name})
             elif path == '/api/shutdown':
                 self.send_json({'status': 'stopping'})
-                threading.Thread(target=self.server.shutdown, daemon=True).start()
+                threading.Thread(target=request_shutdown, args=(self.server,), daemon=True).start()
             elif path == '/api/local/open':
                 selected = choose_local_video()
                 if not selected:
@@ -888,6 +923,30 @@ class StreamProHandler(BaseHTTPRequestHandler):
                 process.stdout.close()
 
 
+def stop_services():
+    for service, method in ((LIBRARY_DOWNLOADS, 'shutdown'), (DOWNLOADS, 'shutdown'), (REMOTE, 'stop'), (JELLYFIN, 'stop')):
+        try:
+            getattr(service, method)()
+        except (OSError, RuntimeError):
+            pass
+
+
+def arm_exit_timeout(server):
+    if getattr(server, 'allow_force_exit', False) and not getattr(server, '_exit_timer', None):
+        timer = threading.Timer(6.0, lambda: os._exit(0))
+        timer.daemon = True
+        server._exit_timer = timer
+        timer.start()
+
+
+def request_shutdown(server):
+    arm_exit_timeout(server)
+    try:
+        stop_services()
+    finally:
+        server.shutdown()
+
+
 def open_browser(port=PORT, path=''):
     url = f'http://{HOST}:{port}{path}'
     chrome = find_chrome()
@@ -902,23 +961,14 @@ def start_tray(server, port):
     from PIL import Image
     icon_path = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent.parent)) / 'assets' / 'app.ico'
     image = Image.open(icon_path)
-    autostart_cmd = f'"{Path(sys.executable).with_name("pythonw.exe")}" "{Path(__file__).resolve()}" --background'
 
     def stop_all(icon, item):
-        REMOTE.stop()
-        JELLYFIN.stop()
-        threading.Thread(target=server.shutdown, daemon=True).start()
-
-    def toggle_autostart(icon, item):
-        set_autostart(not is_autostart_enabled(), autostart_cmd)
+        threading.Thread(target=request_shutdown, args=(server,), daemon=True).start()
 
     icon = pystray.Icon('StreamChromeServer', image, 'StreamChrome Server', menu=pystray.Menu(
-        pystray.MenuItem('Abrir StreamChrome Hub (:8780)', lambda icon, item: open_browser(port), default=True),
-        pystray.MenuItem('Abrir Jellyfin (:8096)', lambda icon, item: open_browser(JELLYFIN.port)),
-        pystray.MenuItem('Pasta Filmes', lambda icon, item: open_media_folder('movies')),
-        pystray.MenuItem('Pasta Series', lambda icon, item: open_media_folder('series')),
-        pystray.MenuItem('Iniciar com o Windows', toggle_autostart, checked=lambda item: is_autostart_enabled()),
-        pystray.MenuItem('Sair', stop_all),
+        pystray.MenuItem('Open StreamChrome Server', lambda icon, item: open_browser(port), default=True),
+        pystray.MenuItem('Open Jellyfin', lambda icon, item: open_browser(JELLYFIN.port)),
+        pystray.MenuItem('Exit', stop_all),
     ))
     threading.Thread(target=icon.run, daemon=True).start()
     return icon
@@ -939,6 +989,7 @@ def main():
     try:
         server = HTTPServer((bind_host, args.port), StreamProHandler)
         server.lan_mode = lan_mode
+        server.allow_force_exit = True
     except OSError:
         try:
             with urllib.request.urlopen(f'http://{HOST}:{args.port}/api/status', timeout=2) as response:
@@ -963,8 +1014,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        REMOTE.stop()
-        JELLYFIN.stop()
+        arm_exit_timeout(server)
+        stop_services()
         if tray:
             tray.stop()
         server.server_close()

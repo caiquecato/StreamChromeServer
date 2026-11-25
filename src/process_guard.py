@@ -2,6 +2,7 @@
 import ctypes
 from ctypes import wintypes
 import os
+import subprocess
 
 
 def _create_job():
@@ -41,3 +42,33 @@ def attach_to_server(process):
     kernel.AssignProcessToJobObject.argtypes=[wintypes.HANDLE,wintypes.HANDLE]
     kernel.AssignProcessToJobObject.restype=wintypes.BOOL
     return bool(kernel.AssignProcessToJobObject(_STREAM_JOB,int(process._handle)))
+
+
+def run_managed(args, capture_output=False, check=False, timeout=None, **kwargs):
+    """Run an engine with subprocess.run semantics and Windows lifetime protection."""
+    input_data = kwargs.pop('input', None)
+    if input_data is not None:
+        if kwargs.get('stdin') is not None:
+            raise ValueError('stdin and input arguments may not both be used.')
+        kwargs['stdin'] = subprocess.PIPE
+    if capture_output:
+        if kwargs.get('stdout') is not None or kwargs.get('stderr') is not None:
+            raise ValueError('stdout and stderr arguments may not be used with capture_output.')
+        kwargs['stdout'] = kwargs['stderr'] = subprocess.PIPE
+    with subprocess.Popen(args, **kwargs) as process:
+        try:
+            if os.name == 'nt' and not attach_to_server(process):
+                raise OSError('Could not bind the engine to the server lifetime.')
+            stdout, stderr = process.communicate(input_data, timeout=timeout)
+        except subprocess.TimeoutExpired as err:
+            process.kill()
+            err.stdout, err.stderr = process.communicate()
+            raise
+        except BaseException:
+            process.kill()
+            process.communicate()
+            raise
+        result = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
+        if check:
+            result.check_returncode()
+        return result

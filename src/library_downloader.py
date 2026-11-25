@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import re
 import secrets
+import socket
 import threading
 import time
 import urllib.error
@@ -47,6 +48,7 @@ class LibraryDownloadService:
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
         self._lock = threading.RLock()
         self._jobs = {}
+        self._closing = False
 
     def _build_target_path(self, kind, title, year, season, episode, episode_title, filename, url):
         raw_name = Path(str(filename or '')).name or Path(unquote(urlparse(url).path)).name or 'Video.mkv'
@@ -111,6 +113,9 @@ class LibraryDownloadService:
         }
 
     def enqueue_from_token(self, data):
+        with self._lock:
+            if self._closing:
+                raise ValueError('The download service is shutting down.')
         stream_token = str(data.get('stream_token') or '').strip()
         stream = get_addon_stream(stream_token)
         url = str(stream.get('url') or '').strip()
@@ -132,6 +137,8 @@ class LibraryDownloadService:
         rel_path = target_path.relative_to(self.server_root).as_posix()
 
         with self._lock:
+            if self._closing:
+                raise ValueError('The download service is shutting down.')
             for existing in self._jobs.values():
                 if existing['target_path'] == target_path and existing['state'] in ('queued', 'downloading'):
                     return self._serialize(existing)
@@ -185,6 +192,16 @@ class LibraryDownloadService:
                 job['error'] = ''
 
             with urlopen_resilient(req, timeout=30) as resp:
+                # Interrupt the socket, not BufferedReader.close(), which waits on its read lock.
+                active_socket = getattr(getattr(getattr(resp, 'fp', None), 'raw', None), '_sock', None)
+                with self._lock:
+                    job['active_socket'] = active_socket
+                    stopping = cancel_ev.is_set()
+                if stopping and active_socket is not None:
+                    try:
+                        active_socket.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
                 status = getattr(resp, 'status', 200)
                 append_mode = status == 206 and resume_from > 0
                 downloaded = resume_from if append_mode else 0
@@ -217,7 +234,7 @@ class LibraryDownloadService:
 
             if cancel_ev.is_set():
                 try:
-                    if part.exists():
+                    if not job.get('preserve_partial') and part.exists():
                         part.unlink()
                 except OSError:
                     pass
@@ -237,7 +254,7 @@ class LibraryDownloadService:
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as err:
             if cancel_ev.is_set():
                 try:
-                    if part.exists():
+                    if not job.get('preserve_partial') and part.exists():
                         part.unlink()
                 except OSError:
                     pass
@@ -246,6 +263,31 @@ class LibraryDownloadService:
             else:
                 with self._lock:
                     job.update(state='failed', speed=0, eta=None, error=str(err)[:160] or 'Download failed.')
+        finally:
+            with self._lock:
+                job.pop('active_socket', None)
+
+    def shutdown(self):
+        """Stop downloads without waiting on network reads; keep resumable partial files."""
+        with self._lock:
+            if self._closing:
+                return
+            self._closing = True
+            sockets = []
+            for job in self._jobs.values():
+                if job['state'] in ('queued', 'downloading'):
+                    job['preserve_partial'] = not job['cancel_event'].is_set()
+                    job['cancel_event'].set()
+                    if job['state'] == 'queued':
+                        job['state'] = 'cancelled'
+                    if job.get('active_socket') is not None:
+                        sockets.append(job['active_socket'])
+        self._executor.shutdown(wait=False, cancel_futures=True)
+        for connection in sockets:
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
 
     def list_jobs(self, catalog_lookup=None):
         with self._lock:

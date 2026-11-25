@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import re
 import sqlite3
-import ssl
 import subprocess
 import threading
 import time
@@ -16,6 +15,7 @@ from urllib.parse import quote
 import urllib.request
 
 from subtitles import guess_search
+from process_guard import run_managed
 
 VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.m4v', '.webm', '.ts', '.m2ts', '.mpg', '.mpeg', '.wmv'}
 SUBTITLE_EXTENSIONS = {'.srt', '.vtt'}
@@ -37,13 +37,7 @@ def _clean_html(text):
 
 def _http_get_bytes(url, timeout=10, limit=6 * 1024 * 1024, headers=None):
     req = urllib.request.Request(url, headers={'User-Agent': USER_AGENT, **(headers or {})})
-    try:
-        resp_cm = urllib.request.urlopen(req, timeout=timeout)
-    except urllib.error.URLError as err:
-        if isinstance(err.reason, ssl.SSLCertVerificationError) and getattr(err.reason, 'verify_code', None) == 10:
-            resp_cm = urllib.request.urlopen(req, timeout=timeout, context=ssl._create_unverified_context())
-        else:
-            raise
+    resp_cm = urllib.request.urlopen(req, timeout=timeout)
     with resp_cm as resp:
         data = resp.read(limit + 1)
         if len(data) > limit:
@@ -261,7 +255,7 @@ class CatalogService:
 
     def _probe_video(self, path):
         try:
-            res = subprocess.run(
+            res = run_managed(
                 [
                     self.ffprobe_bin, '-v', 'error',
                     '-show_entries', 'format=duration,bit_rate,size:stream=codec_name,codec_type,profile,pix_fmt,color_transfer,width,height,r_frame_rate,channels:stream_tags=language,title',
@@ -353,7 +347,7 @@ class CatalogService:
             return filename
         seek = max(1.0, min(duration * 0.15, 180.0)) if duration > 4 else 0.5
         try:
-            subprocess.run(
+            run_managed(
                 [self.ffmpeg_bin, '-nostdin', '-hide_banner', '-loglevel', 'error', '-ss', f'{seek:.2f}', '-i', str(video_path), '-frames:v', '1', '-vf', 'scale=640:-2', '-q:v', '4', '-y', str(target)],
                 stdin=subprocess.DEVNULL, capture_output=True, timeout=20, creationflags=NO_WINDOW,
             )
@@ -656,7 +650,7 @@ class CatalogService:
 
         continue_watching = [
             i for i in sorted(items, key=lambda x: prog_rows.get(x['id'], {}).get('updated_at', 0), reverse=True)
-            if 0.01 <= i['progress'] <= 0.94
+            if i['position'] >= 3 and i['progress'] <= 0.94
         ][:12]
 
         featured = None
@@ -669,7 +663,9 @@ class CatalogService:
 
         return {
             'media_root': str(self.server_root),
+            'library_paths': {'movies': str(self.server_root / 'Filmes'), 'series': str(self.server_root / 'Series')},
             'featured': featured,
+            'hero_items': movies + [{**show, 'kind': 'series', 'id': show['first_episode_id']} for show in series_list],
             'continue_watching': continue_watching,
             'movies': movies,
             'series': series_list,

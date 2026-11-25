@@ -4,7 +4,8 @@
     const t = key => (root.AppUI ? root.AppUI.translate(key) : key);
 
     let catalogData = { movies: [], series: [], continue_watching: [], featured: null, stats: {} };
-    let discoverState = { kind: 'movie', catalog: 'top', items: [], loading: false };
+    let discoverState = { kind: 'movie', catalog: 'top', genre: '', genreMode: false, genres: [], items: [], loading: false };
+    let discoverRequest = 0;
     let localImdbSet = new Set();
     let currentView = 'catalog';
     let currentCatalogItemId = '';
@@ -18,6 +19,13 @@
     let downloadPollTimer = null;
     let lastCompletedSet = new Set();
     let activeModalType = '';
+    let subModalCleanup = null;
+    let subModalFocus = null;
+    let mainModalFocus = null;
+    let heroIndex = 0;
+    let heroTimer = null;
+    let carouselPaused = false;
+    const catalogSources = new Map();
 
     function el(tag, attrs = {}, children = []) {
         const node = document.createElement(tag);
@@ -98,7 +106,7 @@
                 else btn.removeAttribute('aria-current');
             }
         }
-        if (view === 'catalog') loadCatalog();
+        if (view === 'catalog') saveCurrentProgress().finally(loadCatalog);
         else if (view === 'discover' && !discoverState.items.length) loadDiscover();
     }
     root.setHubView = setHubView;
@@ -163,6 +171,7 @@
     }
 
     function renderCatalog() {
+        clearTimeout(heroTimer);
         const container = $('catalogView');
         if (!container) return;
         const term = ($('hubSearchInput')?.value || '').trim().toLowerCase();
@@ -175,11 +184,11 @@
 
         if (!catalogData.movies?.length && !catalogData.series?.length) {
             children.push(el('div', { className: 'hub-empty-card' }, [
-                el('h2', { text: t('Your D:\\StreamServer library is ready') }),
-                el('p', { text: t('Place MP4 or MKV movies and series into the folders below, download links directly into D:, or explore IMDb and Stremio titles.') }),
+                el('h2', { text: t('Your library is ready') }),
+                el('p', { text: t('Place movies and series in your library folders, download to your library, or explore Discover.') }),
                 el('div', { className: 'hub-empty-paths' }, [
-                    el('span', { text: 'D:\\StreamServer\\Filmes' }),
-                    el('span', { text: 'D:\\StreamServer\\Series' }),
+                    el('span', { text: catalogData.library_paths?.movies || catalogData.media_root || 'Filmes' }),
+                    el('span', { text: catalogData.library_paths?.series || catalogData.media_root || 'Series' }),
                 ]),
                 el('div', { className: 'detail-actions' }, [
                     el('button', { type: 'button', className: 'btn btn-play', text: t('Explore Discover'), onClick: () => setHubView('discover') }),
@@ -191,7 +200,9 @@
         }
 
         if (!term && catalogData.featured) {
-            const f = catalogData.featured;
+            const heroes = catalogData.hero_items?.length ? catalogData.hero_items : [catalogData.featured];
+            heroIndex %= heroes.length;
+            const f = heroes[heroIndex];
             const metaParts = [];
             if (f.year) metaParts.push(String(f.year));
             if (f.rating) metaParts.push(`IMDb ${f.rating}`);
@@ -222,7 +233,24 @@
             const media = el('div', { className: 'hub-featured-media' });
             const bg = f.backdrop_url || f.poster_url;
             if (bg) media.append(el('img', { src: bg, alt: f.title || '' }));
-            children.push(el('section', { className: 'hub-featured' }, [info, media]));
+            const changeHero = delta => { heroIndex = (heroIndex + delta + heroes.length) % heroes.length; renderCatalog(); };
+            const controls = heroes.length > 1 ? el('div', {className: 'hero-controls'}, [
+                el('button', {type: 'button', 'aria-label': t('Previous feature'), text: '‹', onClick: () => changeHero(-1)}),
+                el('span', {className: 'notice', text: `${heroIndex + 1} / ${heroes.length}`}),
+                el('button', {type: 'button', 'aria-label': t('Next feature'), text: '›', onClick: () => changeHero(1)}),
+                el('button', {type: 'button', 'aria-label': t('Pause carousel'), 'aria-pressed': String(carouselPaused), text: carouselPaused ? '▶' : 'Ⅱ', onClick: () => { carouselPaused = !carouselPaused; renderCatalog(); }}),
+            ]) : null;
+            const feature = el('section', { className: 'hub-featured' }, [info, media, controls]);
+            children.push(feature);
+            if (heroes.length > 1 && !carouselPaused && !root.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+                const scheduleHero = () => { heroTimer = setTimeout(() => {
+                    if (currentView !== 'catalog' || document.hidden) return;
+                    if (feature.matches(':hover, :focus-within')) { scheduleHero(); return; }
+                    heroIndex = (heroIndex + 1) % heroes.length;
+                    renderCatalog();
+                }, 8000); };
+                scheduleHero();
+            }
         }
 
         if (cont.length) {
@@ -310,13 +338,24 @@
         ].map(([kind, cat, label]) => el('button', {
             type: 'button',
             text: t(label),
-            'aria-pressed': String(discoverState.kind === kind && discoverState.catalog === cat),
+            'aria-pressed': String(!discoverState.genreMode && discoverState.kind === kind && discoverState.catalog === cat),
             onClick: () => {
                 discoverState.kind = kind;
                 discoverState.catalog = cat;
+                discoverState.genreMode = false;
+                discoverState.genre = '';
                 loadDiscover();
             },
         })));
+        for (const [kind, label] of [['movie', 'Movies by genre'], ['series', 'Series by genre']]) {
+            pills.append(el('button', {type: 'button', text: t(label), 'aria-pressed': String(discoverState.genreMode && discoverState.kind === kind), onClick: () => {
+                discoverState.kind = kind;
+                discoverState.catalog = 'top';
+                discoverState.genreMode = true;
+                discoverState.genre = '';
+                loadDiscover();
+            }}));
+        }
 
         const head = el('div', { className: 'hub-section-head' }, [
             pills,
@@ -334,41 +373,147 @@
                 onClick: () => openImdbModal(item.kind, item.imdb_id),
             })));
         }
-        container.replaceChildren(head, body);
+        const genreSelect = el('select', {'aria-label': t('All genres'), onChange: e => {
+            discoverState.genre = e.target.value;
+            loadDiscover();
+        }}, [el('option', {value: '', text: t('All genres')}), ...discoverState.genres.map(g => el('option', {value: g, text: g}))]);
+        genreSelect.value = discoverState.genre;
+        container.replaceChildren(head, ...(discoverState.genreMode ? [genreSelect] : []), body);
     }
 
     async function loadDiscover() {
+        const request = ++discoverRequest;
         discoverState.loading = true;
         renderDiscover();
         const q = ($('hubSearchInput')?.value || '').trim();
         try {
             const params = new URLSearchParams({ kind: discoverState.kind, catalog: discoverState.catalog });
             if (q) params.set('q', q);
+            if (discoverState.genreMode && discoverState.genre) params.set('genre', discoverState.genre);
             const data = await callApi('/api/discover?' + params);
+            if (request !== discoverRequest) return;
             discoverState.items = data.items || [];
+            discoverState.genres = data.genres || [];
         } catch {
+            if (request !== discoverRequest) return;
             discoverState.items = [];
         } finally {
-            discoverState.loading = false;
-            renderDiscover();
+            if (request === discoverRequest) {
+                discoverState.loading = false;
+                renderDiscover();
+            }
         }
     }
 
     function openModal(titleText, bodyNodes, type = '') {
+        closeSubModal();
         const backdrop = $('hubModalBackdrop');
         if (!backdrop) return;
+        if (backdrop.hidden) mainModalFocus = document.activeElement;
         activeModalType = type;
         $('hubModalTitle').textContent = titleText;
         $('hubModalBody').replaceChildren(...bodyNodes);
         backdrop.hidden = false;
+        for (const node of document.querySelectorAll('.topbar, .hub-stage, .workspace')) node.inert = true;
+        $('hubModalClose')?.focus();
     }
 
     function closeModal() {
+        closeSubModal();
         const backdrop = $('hubModalBackdrop');
         if (backdrop) backdrop.hidden = true;
+        for (const node of document.querySelectorAll('.topbar, .hub-stage, .workspace')) node.inert = false;
+        if (mainModalFocus?.isConnected) mainModalFocus.focus();
+        mainModalFocus = null;
         activeModalType = '';
     }
     root.closeHubModal = closeModal;
+
+    function closeSubModal() {
+        subModalCleanup?.();
+        subModalCleanup = null;
+        if ($('hubSubModalBackdrop')) $('hubSubModalBackdrop').hidden = true;
+        if ($('hubModalBackdrop')) $('hubModalBackdrop').inert = false;
+        subModalFocus?.focus();
+        subModalFocus = null;
+    }
+    root.closeHubSubModal = closeSubModal;
+
+    function openSubModal(title, nodes, cleanup = null) {
+        closeSubModal();
+        subModalFocus = document.activeElement;
+        subModalCleanup = cleanup;
+        $('hubSubModalTitle').textContent = title;
+        $('hubSubModalBody').replaceChildren(...nodes);
+        $('hubSubModalBackdrop').hidden = false;
+        $('hubModalBackdrop').inert = true;
+        $('hubSubModalClose').focus();
+    }
+
+    async function openSeasonBatchOverlay(meta, season) {
+        let active = true;
+        let busy = false;
+        const rows = season.episodes.map(ep => ({ep, selected: true, streams: [], choice: '', loading: true}));
+        const list = el('div', {className: 'season-source-list'});
+        const status = el('p', {className: 'notice', role: 'status'});
+        const submit = el('button', {type: 'button', className: 'btn btn-play', disabled: 'disabled', text: t('Download selected')});
+        const countReady = () => rows.filter(r => r.selected && r.choice && !r.queued).length;
+        const update = row => {
+            row.check.checked = row.selected;
+            row.check.disabled = busy || row.queued;
+            if (row.renderedStreams !== row.streams || row.renderedLoading !== row.loading) {
+                row.select.replaceChildren(
+                    el('option', {value: '', text: row.loading ? t('Loading…') : t('Choose source')}),
+                    ...row.streams.map(st => el('option', {value: st.stream_token, text: [st.resolution, st.pt_audio ? 'PT / Dual' : '', st.size_label, st.summary || st.name, st.filename].filter(Boolean).join(' · ')})),
+                );
+                row.renderedStreams = row.streams;
+                row.renderedLoading = row.loading;
+            }
+            row.select.value = row.choice;
+            row.select.disabled = busy || row.loading || row.queued || !row.selected || !row.streams.length;
+            row.message.textContent = row.queued ? t('Queued') : t(row.queueError || row.error || '') || (!row.loading && !row.streams.length ? t('No playable HTTP/Debrid streams returned for this title.') : '');
+            submit.textContent = `${t('Download selected')} (${countReady()})`;
+            submit.disabled = busy || countReady() === 0;
+        };
+        for (const row of rows) {
+            row.check = el('input', {type: 'checkbox', 'aria-label': `E${row.ep.episode}`});
+            row.select = el('select', {'aria-label': `${t('Choose source')} · E${row.ep.episode}`});
+            row.message = el('p', {className: 'notice', role: 'status'});
+            row.check.addEventListener('change', () => { row.selected = row.check.checked; update(row); });
+            row.select.addEventListener('change', () => { row.choice = row.select.value; update(row); });
+            row.node = el('div', {className: 'season-source-row'}, [
+                el('label', {className: 'check-label'}, [row.check, el('span', {text: `E${String(row.ep.episode).padStart(2, '0')} · ${row.ep.title}`})]),
+                row.select, row.message,
+            ]);
+            list.append(row.node);
+            update(row);
+        }
+        submit.addEventListener('click', async () => {
+            if (busy) return;
+            busy = true;
+            rows.forEach(update);
+            await root.SeasonQueue.queueSelected(rows, async (st, ep) => {
+                const fresh = await callApi(`/api/stremio/streams?kind=series&id=${encodeURIComponent(ep.id)}`);
+                const chosen = root.SeasonQueue.refreshedChoice(st, fresh.streams || []);
+                await callApi('/api/library/download', {
+                    stream_token: chosen.stream_token, kind: 'series', title: meta.title, year: meta.year,
+                    season: ep.season, episode: ep.episode, episode_title: ep.title,
+                    filename: chosen.filename, imdb_id: meta.imdb_id,
+                });
+            }, update);
+            busy = false;
+            if (active) {
+                rows.forEach(update);
+                status.textContent = `${t('Queued')}: ${rows.filter(r => r.queued).length} / ${rows.length}`;
+            }
+            await refreshLibraryDownloads();
+        });
+        openSubModal(`${meta.title} · ${t('Download season')} ${season.season}`, [
+            el('p', {className: 'notice', text: t('Select a source for each episode, then download the selected episodes.')}),
+            list, submit, status,
+        ], () => { active = false; });
+        await root.SeasonQueue.loadSources(rows, async id => (await callApi(`/api/stremio/streams?kind=series&id=${encodeURIComponent(id)}`)).streams || [], update, () => active);
+    }
 
     async function openLocalDetailModal(item) {
         openModal(item.title || t('Details'), [el('p', { className: 'notice', text: t('Loading details…') })], 'details');
@@ -450,7 +595,7 @@
                 btn.textContent = t('Downloaded');
                 btn.disabled = true;
             } else if (job.state === 'failed') {
-                btn.textContent = t('Download to D:');
+                btn.textContent = t('Download to library');
                 btn.disabled = false;
             }
         }
@@ -512,14 +657,14 @@
         if (!downloadJobs.length) {
             body.replaceChildren(el('p', {
                 className: 'notice',
-                text: t('No downloads in this session yet. Open any title in IMDb & Stremio and click Download to D:.'),
+                text: t('No downloads yet. Open a title in Discover and choose Download to library.'),
             }));
             return;
         }
 
         const hasFinished = downloadJobs.some(j => !['queued', 'downloading'].includes(j.state));
         const headerBar = el('div', { className: 'hub-section-head' }, [
-            el('span', { className: 'notice', text: t('Saved to D: and indexed in Catalog + Jellyfin.') }),
+            el('span', { className: 'notice', text: t('Saved to your library and indexed in Catalog + Jellyfin.') }),
             hasFinished ? el('button', {
                 type: 'button', className: 'btn btn-vlc', text: t('Clear finished'),
                 onClick: async () => {
@@ -559,7 +704,7 @@
                 el('div', { className: 'dl-job-top' }, [
                     el('div', {}, [
                         el('div', { className: 'episode-row-title', text: `${job.title}${job.subtitle ? ` · ${job.subtitle}` : ''}` }),
-                        el('div', { className: 'stream-filename', text: `D:\\StreamServer\\${job.rel_path.replace(/\//g, '\\')}` }),
+                        el('div', { className: 'stream-filename', text: job.rel_path }),
                     ]),
                     actionBtn || el('span', { className: 'stream-tag', text: stateLabel }),
                 ]),
@@ -577,7 +722,7 @@
     }
 
     async function openDownloadsModal() {
-        openModal(t('Library Downloads (D:\\StreamServer)'), [el('p', { className: 'notice', text: t('Loading downloads…') })], 'downloads');
+        openModal(t('Library downloads'), [el('p', { className: 'notice', text: t('Loading downloads…') })], 'downloads');
         await refreshLibraryDownloads();
         if (activeModalType === 'downloads') renderDownloadsModalBody();
     }
@@ -602,7 +747,7 @@
             await refreshLibraryDownloads();
         } catch (err) {
             btn.disabled = false;
-            btn.textContent = t('Download to D:');
+            btn.textContent = t('Download to library');
             if ($('playerStatus')) root.AppUI?.text($('playerStatus'), err.message);
         }
     }
@@ -619,7 +764,6 @@
 
     async function playAddonStream(st, meta, epObj = null) {
         if (!st?.stream_token) return;
-        currentCatalogItemId = '';
         currentNextEpisodeId = '';
         const nextEp = (meta?.kind === 'series' && epObj) ? findNextEpisodeObj(meta, epObj) : null;
         currentAddonNextContext = nextEp ? { meta, nextEp, bingeGroup: st.binge_group || '', preferPt: Boolean(st.pt_audio) } : null;
@@ -701,7 +845,7 @@
                 const firstLocal = meta.local_matches[0];
                 actions.push(el('button', {
                     type: 'button', className: 'btn btn-play',
-                    text: t('Watch from Disk (D:)'),
+                    text: t('Watch local file'),
                     onClick: () => { closeModal(); playCatalogItem(firstLocal.id, 0); },
                 }));
             }
@@ -789,7 +933,7 @@
 
                     const dlBtn = st.playable
                         ? el('button', {
-                            type: 'button', className: 'btn btn-vlc', 'data-dl-token': st.stream_token, text: t('Download to D:'),
+                            type: 'button', className: 'btn btn-vlc', 'data-dl-token': st.stream_token, text: t('Download to library'),
                             onClick: e => enqueueStreamDownload(st, meta, activeEp, e.currentTarget),
                         })
                         : null;
@@ -807,6 +951,9 @@
             };
 
             const loadStreamsFor = async (videoId, epObj = null) => {
+                if (epObj) {
+                    openSubModal(`${meta.title} · S${String(epObj.season).padStart(2, '0')}E${String(epObj.episode).padStart(2, '0')}`, [streamHead, streamList], () => { streamFetchGen++; });
+                }
                 const gen = ++streamFetchGen;
                 activeEp = epObj;
                 streamTitle.textContent = epObj
@@ -838,24 +985,28 @@
                 let sNum = targetEp ? targetEp.season : meta.seasons[0].season;
                 const epWrap = el('div', { className: 'episode-list' });
                 const sPills = el('div', { className: 'hub-pills' });
+                const batchButton = el('button', {type: 'button', className: 'btn btn-play', onClick: () => openSeasonBatchOverlay(meta, meta.seasons.find(s => s.season === sNum))});
                 let selectedEpId = targetEp ? targetEp.id : '';
 
                 const drawS = () => {
+                    batchButton.textContent = `${t('Download season')} ${sNum}`;
                     const sObj = meta.seasons.find(s => s.season === sNum) || meta.seasons[0];
                     epWrap.replaceChildren(...(sObj?.episodes || []).map(ep => {
                         const localMatch = (meta.local_matches || []).find(m => Number(m.season) === Number(ep.season) && Number(m.episode) === Number(ep.episode));
-                        const row = el('div', { className: 'addon-row' + (ep.id === selectedEpId ? ' episode-row-active' : '') }, [
+                        const row = el('div', { 'data-episode-id': ep.id, className: 'addon-row' + (ep.id === selectedEpId ? ' episode-row-active' : '') }, [
                             el('div', {}, [
                                 el('div', { className: 'episode-row-title', text: `E${String(ep.episode).padStart(2, '0')} · ${ep.title}` }),
                                 el('div', { className: 'episode-row-meta', text: ep.released || '' }),
                             ]),
                             el('div', { className: 'stream-actions' }, [
-                                localMatch ? el('button', { type: 'button', className: 'btn btn-play', text: t('Watch from Disk (D:)'), onClick: () => { closeModal(); playCatalogItem(localMatch.id, 0); } }) : null,
+                                localMatch ? el('button', { type: 'button', className: 'btn btn-play', text: t('Watch local file'), onClick: () => { closeModal(); playCatalogItem(localMatch.id, 0); } }) : null,
                                 el('button', {
                                     type: 'button', className: 'btn btn-vlc', text: t('Load streams / subs'),
                                     onClick: () => {
                                         selectedEpId = ep.id;
-                                        drawS();
+                                        for (const row of epWrap.children) {
+                                            row.className = 'addon-row' + (row.dataset.episodeId === selectedEpId ? ' episode-row-active' : '');
+                                        }
                                         loadStreamsFor(ep.id, ep);
                                     },
                                 }),
@@ -870,13 +1021,13 @@
                     onClick: () => { sNum = s.season; drawS(); },
                 })));
                 drawS();
-                nodes.push(el('p', { className: 'notice', text: t('Click an episode below to load AIOStreams watch and download sources.') }), sPills, epWrap);
-                if (targetEp) setTimeout(() => loadStreamsFor(targetEp.id, targetEp), 0);
+                nodes.push(el('p', { className: 'notice', text: t('Click an episode below to load AIOStreams watch and download sources.') }), sPills, batchButton, epWrap);
+                if (initialVideoId && targetEp) setTimeout(() => loadStreamsFor(targetEp.id, targetEp), 0);
             } else {
                 setTimeout(() => loadStreamsFor(meta.imdb_id, null), 0);
             }
 
-            nodes.push(streamHead, streamList);
+            if (kind !== 'series') nodes.push(streamHead, streamList);
             openModal(`${meta.title} (${meta.imdb_id})`, nodes, 'imdb');
         } catch (err) {
             openModal(t('Discover'), [el('p', { className: 'notice', 'data-error': 'true', text: err.message })], 'imdb');
@@ -1044,15 +1195,7 @@
                 statusMsg,
             ]);
 
-            const autoCheck = el('input', { type: 'checkbox' });
-            autoCheck.checked = Boolean(info.autostart);
-            autoCheck.addEventListener('change', () => callApi('/api/system/autostart', { enabled: autoCheck.checked }));
-            const sysRow = el('label', { className: 'check-label' }, [
-                autoCheck,
-                el('span', { text: `${t('Start automatically with Windows')} · ${info.nvenc ? 'NVENC RTX Active' : 'CPU H.264'}` }),
-            ]);
-
-            openModal(t('TV & Remote Access'), [el('div', { className: 'remote-grid' }, [lanBox, remoteBox]), sysRow], 'remote');
+            openModal(t('TV & Remote Access'), [el('div', { className: 'remote-grid' }, [lanBox, remoteBox])], 'remote');
         } catch (err) {
             openModal(t('TV & Remote Access'), [el('p', { className: 'notice', 'data-error': 'true', text: err.message })], 'remote');
         }
@@ -1062,7 +1205,7 @@
     async function playCatalogItem(itemId, startSeconds = 0) {
         try {
             const data = await callApi('/api/catalog/open', { id: itemId });
-            currentCatalogItemId = data.item_id || itemId;
+            catalogSources.set(data.source, data.item_id || itemId);
             currentNextEpisodeId = data.next_episode_id || '';
             currentAddonNextContext = null;
             pendingResumeSeconds = Number(startSeconds || 0);
@@ -1083,6 +1226,16 @@
         }
     }
     root.playCatalogItem = playCatalogItem;
+
+    async function saveCurrentProgress() {
+        const video = $('mainVideo');
+        if (!currentCatalogItemId || !video) return;
+        const position = root.getPlaybackPosition ? root.getPlaybackPosition() : (video.currentTime || 0);
+        const duration = root.getMovieDuration ? root.getMovieDuration() : (video.duration || 0);
+        if (position >= 3 && Number.isFinite(position) && Number.isFinite(duration)) {
+            await callApi('/api/catalog/progress', {id: currentCatalogItemId, position, duration}).catch(() => {});
+        }
+    }
 
     async function playNextAddonEpisode() {
         const ctx = currentAddonNextContext;
@@ -1157,21 +1310,23 @@
         }
 
         const video = $('mainVideo');
+        root.addEventListener('streamchrome:source-changing', () => {
+            saveCurrentProgress();
+            currentCatalogItemId = '';
+        });
+        root.addEventListener('streamchrome:media', e => {
+            currentCatalogItemId = catalogSources.get(e.detail.source) || '';
+        });
         if (video) {
             video.addEventListener('play', () => {
                 clearInterval(progressTimer);
                 progressTimer = setInterval(() => {
                     if (!currentCatalogItemId || video.paused) return;
-                    const pos = root.getPlaybackPosition ? root.getPlaybackPosition() : (video.currentTime || 0);
-                    const dur = root.getMovieDuration ? root.getMovieDuration() : (video.duration || 0);
-                    if (pos > 3) callApi('/api/catalog/progress', { id: currentCatalogItemId, position: pos, duration: dur }).catch(() => {});
+                    saveCurrentProgress();
                 }, 5000);
             });
             video.addEventListener('pause', () => {
-                if (!currentCatalogItemId) return;
-                const pos = root.getPlaybackPosition ? root.getPlaybackPosition() : (video.currentTime || 0);
-                const dur = root.getMovieDuration ? root.getMovieDuration() : (video.duration || 0);
-                if (pos > 3) callApi('/api/catalog/progress', { id: currentCatalogItemId, position: pos, duration: dur }).catch(() => {});
+                saveCurrentProgress();
             });
         }
 
@@ -1189,7 +1344,20 @@
             else if (currentView === 'discover') renderDiscover();
         });
         root.addEventListener('keydown', e => {
-            if (e.key === 'Escape') { closeModal(); return; }
+            if (e.key === 'Escape') {
+                if ($('hubSubModalBackdrop') && !$('hubSubModalBackdrop').hidden) closeSubModal();
+                else closeModal();
+                return;
+            }
+            const activeBackdrop = !$('hubSubModalBackdrop')?.hidden ? $('hubSubModalBackdrop') : !$('hubModalBackdrop')?.hidden ? $('hubModalBackdrop') : null;
+            if (e.key === 'Tab' && activeBackdrop) {
+                const controls = Array.from(activeBackdrop.querySelectorAll('button:not(:disabled), select:not(:disabled), input:not(:disabled), a[href]'));
+                const first = controls[0], last = controls[controls.length - 1];
+                if (!controls.includes(document.activeElement)) { e.preventDefault(); (e.shiftKey ? last : first)?.focus(); }
+                else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+                else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+            }
+            if (activeBackdrop) return;
             if (currentView === 'player' || ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target?.tagName)) return;
             if (!['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(e.key)) return;
             const cards = Array.from(document.querySelectorAll('.media-card, .episode-row')).filter(node => node.offsetParent !== null);

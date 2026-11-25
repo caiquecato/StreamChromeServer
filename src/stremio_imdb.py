@@ -2,10 +2,10 @@
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import hmac
 import json
 import re
 import secrets
-import ssl
 import threading
 from urllib.parse import quote, urlparse
 import urllib.error
@@ -22,6 +22,7 @@ MAX_ADDON_STREAMS = 512
 
 ADDON_STREAMS = OrderedDict()
 ADDON_STREAMS_LOCK = threading.RLock()
+STREAM_ID_SECRET = secrets.token_bytes(32)
 
 _NOISE_EMOJI_RE = re.compile(r'[\U0001F300-\U0001FAFF\u2600-\u27BF]+')
 _PT_AUDIO_RE = re.compile(r'\b(portuguese|portugu[eê]s|pt-?br|dublado|dual\s*audio)\b|(\bpob\b|\bpor\b)', re.I)
@@ -29,14 +30,8 @@ _RES_RE = re.compile(r'\b(2160p|4k|uhd|1080p|720p|480p)\b', re.I)
 
 
 def urlopen_resilient(req, timeout=25):
-    """Open HTTPS/HTTP requests, retrying expired-clock CDN certs (verify_code=10) only."""
-    try:
-        return urllib.request.urlopen(req, timeout=timeout)
-    except urllib.error.URLError as err:
-        # Windows host clock may sit ahead of short-lived Let's Encrypt CDN certs.
-        if isinstance(err.reason, ssl.SSLCertVerificationError) and getattr(err.reason, 'verify_code', None) == 10:
-            return urllib.request.urlopen(req, timeout=timeout, context=ssl._create_unverified_context())
-        raise
+    """Open a request with the platform's normal TLS certificate validation."""
+    return urllib.request.urlopen(req, timeout=timeout)
 
 
 def _http_json(url, timeout=15, limit=6 * 1024 * 1024):
@@ -58,14 +53,11 @@ def _http_json(url, timeout=15, limit=6 * 1024 * 1024):
 
 def mask_manifest_url(url):
     parsed = urlparse(str(url or ''))
-    parts = [p for p in parsed.path.split('/') if p]
-    if len(parts) >= 3:
-        masked_path = '/' + '/'.join([parts[0], '••••', parts[-1]])
-    elif parts:
-        masked_path = '/' + parts[-1]
-    else:
-        masked_path = '/manifest.json'
-    return f'{parsed.scheme}://{parsed.netloc}{masked_path}'
+    hostname = parsed.hostname or ''
+    if ':' in hostname:
+        hostname = '[' + hostname + ']'
+    port = ':' + str(parsed.port) if parsed.port else ''
+    return f'{parsed.scheme}://{hostname}{port}/••••/manifest.json'
 
 
 def _clean_text(text):
@@ -167,7 +159,19 @@ def _imdb_suggest(query, kind='movie'):
     return results
 
 
-def discover(kind='movie', catalog='top', search=''):
+def get_genres(kind='movie'):
+    if kind not in ('movie', 'series'):
+        raise ValueError('Invalid catalog kind.')
+    manifest = _http_json(f'{CINEMETA_BASE}/manifest.json')
+    for catalog in manifest.get('catalogs', []):
+        if catalog.get('type') == kind and catalog.get('id') == 'top':
+            for extra in catalog.get('extra', []):
+                if extra.get('name') == 'genre':
+                    return list(dict.fromkeys(str(g) for g in extra.get('options', []) if g))
+    return []
+
+
+def discover(kind='movie', catalog='top', search='', genre=''):
     if kind not in ('movie', 'series'):
         raise ValueError('Invalid catalog kind.')
     if catalog not in ('top', 'imdbRating'):
@@ -199,9 +203,12 @@ def discover(kind='movie', catalog='top', search=''):
                 if norm and norm['imdb_id'] not in seen:
                     seen.add(norm['imdb_id'])
                     items.append(norm)
+        if genre:
+            items = [item for item in items if genre in item.get('genres', [])]
         return items[:40]
 
-    data = _http_json(f'{CINEMETA_BASE}/catalog/{kind}/{catalog}.json')
+    extra = f'/genre={quote(str(genre), safe="")}' if genre else ''
+    data = _http_json(f'{CINEMETA_BASE}/catalog/{kind}/{catalog}{extra}.json')
     out = []
     for entry in data.get('metas', []):
         norm = _normalize_catalog_item(entry, kind)
@@ -265,7 +272,7 @@ def _normalize_manifest_url(url):
     if text.startswith('stremio://'):
         text = 'https://' + text[len('stremio://'):]
     parsed = urlparse(text)
-    if parsed.scheme != 'https' or not parsed.hostname or not parsed.path.endswith('/manifest.json'):
+    if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or not parsed.path.endswith('/manifest.json'):
         raise ValueError('Paste a valid HTTPS Stremio manifest.json URL.')
     return text
 
@@ -329,6 +336,7 @@ def _parse_addon_stream(addon_name, item, kind, video_id):
         })
         return {
             'addon': addon_name,
+            'source_key': hmac.new(STREAM_ID_SECRET, json.dumps([video_id, stream_url, hdrs], sort_keys=True).encode('utf-8'), hashlib.sha256).hexdigest(),
             'name': clean_name[:90],
             'summary': summary,
             'label': summary,
@@ -389,7 +397,7 @@ class StremioAddonManager:
             key = a.get('key') or hashlib.sha256(url.encode('utf-8')).hexdigest()[:16]
             out.append({
                 'key': key,
-                'id': a.get('id', ''),
+                'id': ('addon-' + key) if str(a.get('id', '')).startswith(('http://', 'https://')) else a.get('id', ''),
                 'name': a.get('name', 'Addon'),
                 'description': a.get('description', ''),
                 'masked_url': mask_manifest_url(url),
@@ -401,7 +409,7 @@ class StremioAddonManager:
         clean_url = _normalize_manifest_url(manifest_url)
         manifest = _http_json(clean_url, timeout=15)
         name = str(manifest.get('name') or urlparse(clean_url).hostname)
-        addon_id = str(manifest.get('id') or clean_url)
+        addon_id = str(manifest.get('id') or ('addon-' + hashlib.sha256(clean_url.encode('utf-8')).hexdigest()[:16]))
         raw_res = manifest.get('resources') or []
         resources = [r.get('name') if isinstance(r, dict) else str(r) for r in raw_res]
         entry = {

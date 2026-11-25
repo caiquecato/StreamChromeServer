@@ -5,6 +5,27 @@
     'use strict';
     // English is canonical. Exact fragments intentionally retain their spaces.
     const entries = [
+        ["Your library is ready", "Seu acervo está pronto", "Tu biblioteca está lista"],
+        ["Place movies and series in your library folders, download to your library, or explore Discover.", "Coloque filmes e séries nas pastas do acervo, baixe para o acervo ou explore Descobrir.", "Coloca películas y series en las carpetas de tu biblioteca, descarga a tu biblioteca o explora Descubrir."],
+        ["Download to library", "Baixar para o acervo", "Descargar a la biblioteca"],
+        ["Watch local file", "Assistir arquivo local", "Ver archivo local"],
+        ["Library downloads", "Downloads do acervo", "Descargas de la biblioteca"],
+        ["No downloads yet. Open a title in Discover and choose Download to library.", "Nenhum download ainda. Abra um título em Descobrir e escolha Baixar para o acervo.", "Aún no hay descargas. Abre un título en Descubrir y elige Descargar a la biblioteca."],
+        ["Saved to your library and indexed in Catalog + Jellyfin.", "Salvo no acervo e indexado no Catálogo + Jellyfin.", "Guardado en tu biblioteca e indexado en Catálogo + Jellyfin."],
+        ["Selected source is no longer available. Choose a source again.", "A fonte escolhida não está mais disponível. Escolha uma fonte novamente.", "La fuente elegida ya no está disponible. Elige una fuente de nuevo."],
+
+        ["Close server", "Encerrar servidor", "Cerrar servidor"],
+        ["Download season", "Baixar temporada", "Descargar temporada"],
+        ["Download selected", "Baixar selecionados", "Descargar seleccionados"],
+        ["Choose source", "Escolher fonte", "Elegir fuente"],
+        ["Select a source for each episode, then download the selected episodes.", "Escolha a fonte de cada episódio e baixe os selecionados.", "Elige la fuente de cada episodio y descarga los seleccionados."],
+        ["Movies by genre", "Filmes por gênero", "Películas por género"],
+        ["Series by genre", "Séries por gênero", "Series por género"],
+        ["All genres", "Todos os gêneros", "Todos los géneros"],
+        ["Previous feature", "Destaque anterior", "Destacado anterior"],
+        ["Next feature", "Próximo destaque", "Siguiente destacado"],
+        ["Pause carousel", "Pausar carrossel", "Pausar carrusel"],
+
         ['Download options','Opções de download','Opciones de descarga'],
         ['Playback settings','Configurações de reprodução','Ajustes de reproducción'],
         ['Save folder','Pasta de destino','Carpeta de destino'],

@@ -1,0 +1,52 @@
+[
+  {
+    "name": "FFmpeg",
+    "version": "9.0.2",
+    "url": "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip",
+    "sha256": "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba",
+    "filename": "ffmpeg-9.0.2.zip",
+    "destination": "ffmpeg",
+    "archive": true,
+    "external_size": 320000000
+  },
+  {
+    "name": "Jellyfin",
+    "version": "12.4",
+    "url": "https://repo.jellyfin.org/files/server/windows/stable/v12.4/amd64/jellyfin_12.4-amd64.zip",
+    "sha256": "d62b5b30390213680fd1fae5484082ae27b2a778cfd40a473ad7b1e4147d75a6",
+    "filename": "jellyfin-12.4.zip",
+    "destination": "",
+    "archive": true,
+    "external_size": 529358935
+  },
+  {
+    "name": "yt-dlp",
+    "version": "2026.10.26",
+    "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp.exe",
+    "sha256": "f5389d3698ecde4ef06f4e6b1ce0294fe9ac1396228c8990b8d3416d6d177a7d",
+    "filename": "yt-dlp.exe",
+    "destination": "yt-dlp",
+    "archive": false,
+    "external_size": 23575744
+  },
+  {
+    "name": "Deno",
+    "version": "2.9.8",
+    "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-pc-windows-msvc.zip",
+    "sha256": "cba84b26e0df5ae7f74fc66b86a95b866872a86292ebd84fa1e959927edd93bf",
+    "filename": "deno-2.9.8.zip",
+    "destination": "yt-dlp",
+    "archive": true,
+    "external_size": 98081568
+  },
+  {
+    "name": "cloudflared",
+    "version": "2026.11.2",
+    "url": "https://github.com/cloudflare/cloudflared/releases/download/2026.11.2/cloudflared-windows-amd64.exe",
+    "sha256": "555b46c85582461d189cac30d14ad05480d612613801be9f110b8ce08c5b2113",
+    "filename": "cloudflared.exe",
+    "destination": "cloudflared",
+    "archive": false,
+    "external_size": 55470800
+  }
+]

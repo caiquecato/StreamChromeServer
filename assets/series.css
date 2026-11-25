@@ -1,0 +1,14 @@
+.hub-sub-modal-backdrop { z-index: 180 !important; background: rgb(0 0 0 / .72); }
+.hub-sub-modal-backdrop .hub-modal { width: min(1000px, calc(100vw - 32px)); max-height: 88dvh; }
+.season-source-list { display: grid; gap: 12px; }
+.season-source-row { padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-card); min-width: 0; }
+.season-source-row label { display: flex; gap: 10px; margin-bottom: 10px; align-items: baseline; }
+.season-source-row select { display: block; width: 100%; min-width: 0; padding: 10px; background: var(--field); color: var(--text-main); border: 1px solid var(--border); border-radius: 4px; }
+.hub-featured { position: relative; }
+.hero-controls { position: absolute; right: 18px; bottom: 14px; display: flex; align-items: center; gap: 6px; z-index: 2; padding: 4px; border-radius: 6px; background: rgb(15 16 18 / .86); color: #fff; }
+.hero-controls .notice { color: inherit; padding: 0 3px; }
+.hero-controls button { border: 1px solid rgb(255 255 255 / .25); background: transparent; color: inherit; border-radius: 4px; padding: 6px 10px; min-height: 32px; }
+.hero-controls button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+@media (max-width: 780px) {
+    .hub-stage .hero-controls { position: static; grid-column: 1 / -1; justify-self: end; margin: 0 16px 14px; }
+}

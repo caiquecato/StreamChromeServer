@@ -11,7 +11,7 @@ class DownloadTests(unittest.TestCase):
   self.assertEqual(validate_link(' https://example.org/a '),'https://example.org/a')
   service=DownloadService('tool','ffmpeg')
   fake=type('Result',(),{'returncode':0,'stdout':json.dumps({'title':'Movie <script>','formats':[{'height':1080,'vcodec':'h264'},{'height':720,'vcodec':'h264'},{'height':1080,'vcodec':'h264','has_drm':True}]})})()
-  with patch('downloads.subprocess.run',return_value=fake):job=service.analyze('https://example.org/a')
+  with patch('downloads.run_managed',return_value=fake):job=service.analyze('https://example.org/a')
   self.assertEqual(job['heights'],[1080,720]);self.assertEqual(job['title'],'Movie <script>')
   self.assertNotIn('url',job);self.assertNotIn('process',job)
   with self.assertRaises(ValueError):service.start(job['id'],'1080;command')
@@ -20,14 +20,14 @@ class DownloadTests(unittest.TestCase):
   service=DownloadService('tool','ffmpeg')
   info={'title':'Video','requested_formats':[{'vcodec':'av01','acodec':'none','url':'https://example.org/video','http_headers':{'User-Agent':'Browser','Referer':'https://example.org/','Bad':'hidden'}},{'vcodec':'none','acodec':'opus','url':'https://example.org/audio'}]}
   fake=type('Result',(),{'returncode':0,'stdout':json.dumps(info)})()
-  with patch('downloads.subprocess.run',return_value=fake):job=service.analyze('https://example.org/watch')
+  with patch('downloads.run_managed',return_value=fake):job=service.analyze('https://example.org/watch')
   source,options=service.playback(job['id'])
   self.assertEqual(source,'https://example.org/video');self.assertEqual(options['audio_url'],'https://example.org/audio')
   self.assertIn('User-Agent: Browser',options['headers']);self.assertNotIn('Bad',options['headers'])
   self.assertNotIn('audio_url',job);self.assertNotIn('headers',job)
  def test_playlist_is_not_silently_downloaded(self):
   service=DownloadService('tool','ffmpeg');fake=type('Result',(),{'returncode':0,'stdout':'{"_type":"playlist","entries":[]}'})()
-  with patch('downloads.subprocess.run',return_value=fake):
+  with patch('downloads.run_managed',return_value=fake):
    with self.assertRaisesRegex(ValueError,'single video'):service.analyze('https://example.org/list')
  def test_cancel_targets_only_job_process(self):
   service=DownloadService('tool','ffmpeg');job={'id':'x','title':'Movie','duration':1,'heights':[],'state':'downloading','downloaded':0,'total':0,'speed':0,'eta':None,'error':'','process':object(),'cancel':False};service.jobs['x']=job

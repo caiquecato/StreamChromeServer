@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import re
 import secrets
-import ssl
 import threading
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -69,20 +68,11 @@ def http_bytes(url, headers=None, payload=None, limit=MAX_SUBTITLE):
         request_headers['Content-Type'] = 'application/json'
     request = urllib.request.Request(url, data=body, headers=request_headers)
     try:
-        try:
-            with urllib.request.urlopen(request, timeout=18) as response:
-                content = response.read(limit + 1)
-                if len(content) > limit:
-                    raise ProviderError('The provider response exceeded the size limit.')
-                return content
-        except urllib.error.URLError as error:
-            if isinstance(error.reason, ssl.SSLCertVerificationError) and getattr(error.reason, 'verify_code', None) == 10:
-                with urllib.request.urlopen(request, timeout=18, context=ssl._create_unverified_context()) as response:
-                    content = response.read(limit + 1)
-                    if len(content) > limit:
-                        raise ProviderError('The provider response exceeded the size limit.')
-                    return content
-            raise
+        with urllib.request.urlopen(request, timeout=18) as response:
+            content = response.read(limit + 1)
+            if len(content) > limit:
+                raise ProviderError('The provider response exceeded the size limit.')
+            return content
     except urllib.error.HTTPError as error:
         message = {401: 'Invalid key or session; check the settings.', 403: 'Access denied; check your key and account plan.', 406: 'Download limit reached or session expired.', 429: 'Search limit reached; try again later.'}.get(error.code, f'The service responded with HTTP {error.code}.')
         raise ProviderError(message) from None
@@ -166,8 +156,9 @@ def validate_search(data):
 
 
 class SubtitleService:
-    def __init__(self, settings):
+    def __init__(self, settings, settings_path=SETTINGS_PATH):
         self.settings = settings.copy()
+        self.settings_path = Path(settings_path)
         self.entries = OrderedDict()
         self.lock = threading.RLock()
         self.download_lock = threading.Lock()
@@ -206,7 +197,7 @@ class SubtitleService:
                 if host not in ('api.opensubtitles.com', 'vip-api.opensubtitles.com'):
                     raise ProviderError('Invalid OpenSubtitles server.')
                 settings.update(opensubtitles_token=login['token'], opensubtitles_host=host)
-            save_settings(settings)
+            save_settings(settings, self.settings_path)
             self.settings = settings
         return self.status()
 

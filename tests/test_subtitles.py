@@ -13,6 +13,16 @@ import subtitles as subs
 SRT = b'1\n00:00:01,000 --> 00:00:03,500\nOla!\n'
 
 class SubtitleTests(unittest.TestCase):
+    def test_provider_keys_stay_in_the_selected_app_data_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            settings_path = Path(tmp) / 'subtitle_settings.dat'
+            shared_path = Path(tmp) / 'server_settings.dat'
+            shared_path.write_bytes(b'other-services-must-stay-intact')
+            service = subs.SubtitleService({}, settings_path=settings_path)
+            self.assertEqual(service.configure({'subdl_key': 'test-key-not-secret'})['subdl'], True)
+            self.assertEqual(subs.load_settings(settings_path)['subdl_key'], 'test-key-not-secret')
+            self.assertEqual(shared_path.read_bytes(), b'other-services-must-stay-intact')
+
     def test_srt_and_existing_vtt_have_one_header(self):
         self.assertIn('00:00:01.000 --> 00:00:03.500', subs.to_vtt(SRT))
         self.assertEqual(subs.to_vtt(b'\xef\xbb\xbfWEBVTT\n\n00:01.000 --> 00:03.000\nHi'), 'WEBVTT\n\n00:01.000 --> 00:03.000\nHi\n')

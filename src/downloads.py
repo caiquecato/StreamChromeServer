@@ -2,7 +2,7 @@
 import json,os,re,secrets,subprocess,threading
 from pathlib import Path
 from urllib.parse import urlparse
-from process_guard import attach_to_server
+from process_guard import attach_to_server, run_managed
 from subtitles import guess_search
 
 NO_WINDOW=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0
@@ -27,14 +27,17 @@ class DownloadService:
         self.tool=str(tool);self.ffmpeg=str(Path(ffmpeg).parent)
         self.destination=Path(destination or Path.home()/'Downloads'/'StreamChromePro')
         self.jobs={};self.lock=threading.RLock()
+        self._closing=False
     def command(self):
         runtime=Path(self.tool).with_name('deno.exe')
         runtime_args=['--js-runtimes','deno:'+str(runtime)] if runtime.is_file() else []
         return [self.tool]+runtime_args+['--ignore-config','--no-playlist','--playlist-end','2','--no-warnings','--no-colors','--socket-timeout','20','--retries','2','--no-exec','--ffmpeg-location',self.ffmpeg]
     def analyze(self,url):
+        with self.lock:
+            if self._closing:raise ValueError('The download service is shutting down.')
         url=validate_link(url)
         try:
-            result=subprocess.run(self.command()+['--check-formats','--skip-download','--dump-single-json','--',url],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=75,creationflags=NO_WINDOW)
+            result=run_managed(self.command()+['--check-formats','--skip-download','--dump-single-json','--',url],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=75,creationflags=NO_WINDOW)
         except FileNotFoundError:raise ValueError('The downloader is unavailable. Update the desktop app.') from None
         except subprocess.TimeoutExpired:raise ValueError('Link analysis timed out. Try again.') from None
         if result.returncode:raise ValueError('Could not analyze this link. It may be unavailable, require sign-in, or be unsupported.')
@@ -46,6 +49,7 @@ class DownloadService:
         if not formats and info.get('has_drm'):raise ValueError('Protected videos cannot be downloaded.')
         heights=sorted({int(f['height']) for f in formats if isinstance(f.get('height'),(int,float)) and 0<f['height']<=8640},reverse=True)
         with self.lock:
+            if self._closing:raise ValueError('The download service is shutting down.')
             # Do not evict an active job while pruning previous analyses.
             if len(self.jobs)>=12:
                 old=next((key for key,item in self.jobs.items() if item['state'] not in ('downloading','processing')),None)
@@ -100,6 +104,7 @@ class DownloadService:
         return folder,template
     def start(self,token,quality):
         with self.lock:
+            if self._closing:raise ValueError('The download service is shutting down.')
             job=self.jobs.get(token)
             if job is None:raise ValueError('Analyze the link first.')
             if job['state']!='ready':raise ValueError('Analyze the link again before another download.')
@@ -145,6 +150,17 @@ class DownloadService:
         if process.poll() is not None:return
         if os.name=='nt':subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],capture_output=True,creationflags=NO_WINDOW)
         else:process.terminate()
+    def shutdown(self):
+        with self.lock:
+            if self._closing:return
+            self._closing=True
+            processes=[]
+            for job in self.jobs.values():
+                if job['state'] in ('downloading','processing'):
+                    job['cancel']=True
+                    if job.get('process') is not None:processes.append(job['process'])
+        for process in processes:
+            threading.Thread(target=self._stop,args=(process,),daemon=True).start()
     def cancel(self,token):
         with self.lock:
             job=self.jobs.get(token)

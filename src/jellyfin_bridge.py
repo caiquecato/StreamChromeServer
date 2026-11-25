@@ -15,13 +15,16 @@ NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
 
 class JellyfinBridge:
-    def __init__(self, jellyfin_dir, ffmpeg_bin, link_path, settings_path, port=8096):
+    def __init__(self, jellyfin_dir, ffmpeg_bin, link_path, settings_path, port=8096, runtime_dir=None):
         self.jellyfin_dir = Path(jellyfin_dir)
         self.exe = self.jellyfin_dir / 'system' / 'jellyfin.exe'
-        self.data_dir = self.jellyfin_dir / 'data'
-        self.config_dir = self.jellyfin_dir / 'config'
-        self.cache_dir = self.jellyfin_dir / 'cache'
-        self.log_dir = self.jellyfin_dir / 'logs'
+        if (self.jellyfin_dir / 'jellyfin.exe').is_file():
+            self.exe = self.jellyfin_dir / 'jellyfin.exe'
+        runtime = Path(runtime_dir) if runtime_dir is not None else self.jellyfin_dir
+        self.data_dir = runtime / 'data'
+        self.config_dir = runtime / 'config'
+        self.cache_dir = runtime / 'cache'
+        self.log_dir = runtime / 'logs'
         self.ffmpeg_bin = Path(ffmpeg_bin)
         self.link_path = Path(link_path)
         self.settings_path = Path(settings_path)

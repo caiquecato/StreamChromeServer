@@ -11,6 +11,15 @@ class ProcessLifetimeTests(unittest.TestCase):
     def test_ffmpeg_children_cannot_outlive_the_server(self):
         directory=str(Path(__file__).resolve().parents[1]/'src')
         script=f'import sys,subprocess,time;sys.path.insert(0,{directory!r});from process_guard import attach_to_server;p=subprocess.Popen([sys.executable,"-c","import time;time.sleep(60)"],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);print(str(p.pid)+":"+str(attach_to_server(p)),flush=True);time.sleep(60)'
+        self.assert_child_stops_with_parent(script)
+
+    def test_managed_analysis_cannot_outlive_server(self):
+        directory=str(Path(__file__).resolve().parents[1]/'src')
+        child='import os,time;print(str(os.getpid())+":True",flush=True);time.sleep(60)'
+        script=f'import sys;sys.path.insert(0,{directory!r});from process_guard import run_managed;run_managed([sys.executable,"-c",{child!r}])'
+        self.assert_child_stops_with_parent(script)
+
+    def assert_child_stops_with_parent(self,script):
         parent=subprocess.Popen([sys.executable,'-c',script],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,creationflags=subprocess.CREATE_NO_WINDOW)
         handle=None
         child=None
