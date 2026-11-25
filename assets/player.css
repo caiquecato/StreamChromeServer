@@ -51,6 +51,10 @@ button:disabled,select:disabled{opacity:.55;cursor:not-allowed}
 video{display:block;width:100%;height:100%;min-height:0;object-fit:contain;background:#000}
 .placeholder-screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:15px;text-align:center;color:#d5d9df;padding:24px;background:#08090a;z-index:1}
 .placeholder-icon{color:#626b78}
+.placeholder-spinner{display:none;width:32px;height:32px;border-radius:50%;border:3px solid rgba(255,255,255,.16);border-top-color:var(--accent,#3569d2);animation:scs-spin .85s linear infinite}
+.placeholder-screen[data-loading='true'] .placeholder-spinner{display:block}
+.placeholder-screen[data-loading='true'] .placeholder-icon,.placeholder-screen[data-loading='true'] .btn{display:none}
+@keyframes scs-spin{to{transform:rotate(360deg)}}
 .placeholder-screen p{font-size:15px;max-width:36ch;color:#abb3bf}
 .placeholder-screen .btn{margin-top:5px}
 .controls-overlay{position:absolute;bottom:0;left:0;right:0;z-index:5;color:#f7f7f8;padding:30px 16px 14px;display:flex;flex-direction:column;gap:11px;background:linear-gradient(transparent,rgba(0,0,0,.82));opacity:1;transition:opacity 160ms ease}

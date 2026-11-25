@@ -22,10 +22,10 @@ _SEASON_EP_RE = re.compile(r'(?:S\d{1,2}E\d{1,3}|\b\d{1,2}x\d{1,3}\b)', re.I)
 CHUNK_BYTES = 256 * 1024
 DISK_BUFFER_BYTES = 4 * 1024 * 1024
 QUEUE_CHUNKS = 48
-PARALLEL_BLOCK_BYTES = 4 * 1024 * 1024
+PARALLEL_BLOCK_BYTES = 8 * 1024 * 1024
 PARALLEL_MIN_BYTES = 8 * 1024 * 1024
 PARALLEL_WORKERS = 6
-PARALLEL_MAX_BUFFER_BLOCKS = 12
+PARALLEL_MAX_BUFFER_BLOCKS = 24
 MAX_STALL_RETRIES = 15
 DOWNLOAD_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 
@@ -60,6 +60,9 @@ def _open_media_stream(req, timeout=30):
             ctx.verify_flags |= getattr(ssl, 'X509_V_FLAG_NO_CHECK_TIME', 0x200000)
             return urllib.request.urlopen(req, timeout=timeout, context=ctx)
         raise
+
+
+_DEFAULT_OPEN_MEDIA_STREAM = _open_media_stream
 
 
 class LibraryDownloadService:
@@ -203,6 +206,9 @@ class LibraryDownloadService:
         try:
             with _open_media_stream(req, timeout=12) as resp:
                 status = getattr(resp, 'status', 200)
+                final_url = resp.geturl() if hasattr(resp, 'geturl') else job['url']
+                if final_url:
+                    job['resolved_url'] = final_url
                 total = _parse_total_from_headers(resp.headers, status, 0) or job['total']
                 return (status == 206 and total >= PARALLEL_MIN_BYTES), total
         except (urllib.error.URLError, http.client.HTTPException, TimeoutError, ssl.SSLError, OSError):
@@ -248,7 +254,66 @@ class LibraryDownloadService:
                 if socks:
                     socks.discard(sock)
 
-        def _fetch_block(idx):
+        def _close_conn(wconn):
+            conn = wconn[2]
+            if conn is not None:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                wconn[0] = None
+                wconn[1] = None
+                wconn[2] = None
+
+        def _fetch_block_keepalive(target_url, req_headers, start, end, expected, wconn):
+            parsed = urlparse(target_url)
+            path = parsed.path or '/'
+            if parsed.query:
+                path = f'{path}?{parsed.query}'
+            if wconn[2] is None or wconn[0] != parsed.scheme or wconn[1] != parsed.netloc:
+                _close_conn(wconn)
+                if parsed.scheme == 'https':
+                    ctx = ssl.create_default_context()
+                    try:
+                        conn = http.client.HTTPSConnection(parsed.netloc, timeout=8, context=ctx)
+                        conn.connect()
+                    except ssl.SSLCertVerificationError as err:
+                        if getattr(err, 'verify_code', None) == 10:
+                            ctx.verify_flags |= getattr(ssl, 'X509_V_FLAG_NO_CHECK_TIME', 0x200000)
+                            conn = http.client.HTTPSConnection(parsed.netloc, timeout=8, context=ctx)
+                            conn.connect()
+                        else:
+                            raise
+                else:
+                    conn = http.client.HTTPConnection(parsed.netloc, timeout=8)
+                    conn.connect()
+                wconn[0], wconn[1], wconn[2] = parsed.scheme, parsed.netloc, conn
+            conn = wconn[2]
+            _register_socket(conn.sock)
+            try:
+                conn.request('GET', path, headers={**req_headers, 'Connection': 'keep-alive'})
+                resp = conn.getresponse()
+                if resp.status in (301, 302, 303, 307, 308):
+                    resp.read()
+                    _close_conn(wconn)
+                    return None, resp.status
+                if resp.status != 206:
+                    resp.read()
+                    _close_conn(wconn)
+                    raise urllib.error.HTTPError(target_url, resp.status, resp.reason, resp.headers, None)
+                buf = bytearray()
+                while len(buf) < expected and not cancel_ev.is_set():
+                    chunk = resp.read(min(CHUNK_BYTES, expected - len(buf)))
+                    if not chunk:
+                        break
+                    buf.extend(chunk)
+                if str(resp.getheader('Connection') or '').lower() == 'close' or len(buf) != expected:
+                    _close_conn(wconn)
+                return bytes(buf), 206
+            finally:
+                _unregister_socket(conn.sock)
+
+        def _fetch_block(idx, wconn):
             start = resume_from + idx * PARALLEL_BLOCK_BYTES
             end = min(total - 1, start + PARALLEL_BLOCK_BYTES - 1)
             expected = end - start + 1
@@ -257,14 +322,25 @@ class LibraryDownloadService:
                     return None
                 buf = bytearray()
                 sock = None
+                req_headers = {'User-Agent': DOWNLOAD_USER_AGENT, **job['headers'], 'Range': f'bytes={start}-{end}'}
+                target_url = job.get('resolved_url') or job['url']
                 try:
-                    req = urllib.request.Request(
-                        job['url'],
-                        headers={'User-Agent': DOWNLOAD_USER_AGENT, **job['headers'], 'Range': f'bytes={start}-{end}'},
-                    )
-                    with _open_media_stream(req, timeout=15) as resp:
+                    if _open_media_stream is _DEFAULT_OPEN_MEDIA_STREAM:
+                        data, status = _fetch_block_keepalive(target_url, req_headers, start, end, expected, wconn)
+                        if status in (301, 302, 303, 307, 308):
+                            job['resolved_url'] = ''
+                            target_url = job['url']
+                        elif data is not None and len(data) == expected:
+                            return data
+                        else:
+                            continue
+                    req = urllib.request.Request(target_url, headers=req_headers)
+                    with _open_media_stream(req, timeout=10) as resp:
                         if getattr(resp, 'status', 200) != 206:
                             raise ValueError(f'Expected HTTP 206, got {getattr(resp, "status", 200)}')
+                        final_url = resp.geturl() if hasattr(resp, 'geturl') else target_url
+                        if final_url:
+                            job['resolved_url'] = final_url
                         sock = getattr(getattr(getattr(resp, 'fp', None), 'raw', None), '_sock', None)
                         _register_socket(sock)
                         while len(buf) < expected and not cancel_ev.is_set():
@@ -277,19 +353,25 @@ class LibraryDownloadService:
                     if len(buf) == expected:
                         return bytes(buf)
                 except urllib.error.HTTPError as err:
+                    _close_conn(wconn)
+                    if err.code in (401, 403, 404, 410) and job.get('resolved_url') and job['resolved_url'] != job['url']:
+                        job['resolved_url'] = ''
+                        continue
                     if err.code not in (429, 500, 502, 503, 504) or attempt == 7:
                         raise
                 except (urllib.error.URLError, http.client.HTTPException, TimeoutError, ssl.SSLError, OSError, ValueError):
+                    _close_conn(wconn)
                     if attempt == 7:
                         raise
                 finally:
                     _unregister_socket(sock)
-                if cancel_ev.wait(min(4.0, 0.4 + attempt * 0.5)):
+                if cancel_ev.wait(min(6.0, 0.5 + attempt * 0.7)):
                     return None
             raise ValueError(f'Block {idx} failed after retries.')
 
         def _worker():
             nonlocal next_fetch_idx, downloaded_live, win_start, win_bytes
+            wconn = [None, None, None]
             try:
                 while not cancel_ev.is_set():
                     with cond:
@@ -304,7 +386,7 @@ class LibraryDownloadService:
                             return
                         idx = next_fetch_idx
                         next_fetch_idx += 1
-                    data = _fetch_block(idx)
+                    data = _fetch_block(idx, wconn)
                     if data is None:
                         return
                     with cond:
@@ -329,6 +411,8 @@ class LibraryDownloadService:
                 with cond:
                     worker_errors.append(exc)
                     cond.notify_all()
+            finally:
+                _close_conn(wconn)
 
         threads = [threading.Thread(target=_worker, daemon=True) for _ in range(min(PARALLEL_WORKERS, num_blocks))]
         for th in threads:

@@ -103,7 +103,8 @@
             <div class="placeholder-icon">
                 <svg width="32" height="32" viewbox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>
             </div>
-            <h2>StreamChrome PRO</h2><p data-i18n="Open a local video or paste a video URL.">Open a local video or paste a video URL.</p><button class="btn btn-play" onclick="openLocalVideo()" data-open-file data-i18n="Open file">Open file</button>
+            <div class="placeholder-spinner" aria-hidden="true"></div>
+            <h2 id="placeholderTitle">StreamChrome PRO</h2><p id="placeholderText" data-i18n="Open a local video or paste a video URL.">Open a local video or paste a video URL.</p><button class="btn btn-play" id="placeholderBtn" onclick="openLocalVideo()" data-open-file data-i18n="Open file">Open file</button>
         </div>
 
         <!-- Barra de Controles Customizada com Tempo Real e Seek Total -->
@@ -253,6 +254,21 @@
     }
     const $ = id => document.getElementById(id);
     const video = $('mainVideo'), inputUrl = $('inputUrl'), placeholder = $('placeholder');
+    window.setPlayerLoading = function (active, title = '', detail = '') {
+        if (!placeholder) return;
+        const tEl = $('placeholderTitle'), pEl = $('placeholderText');
+        if (active) {
+            placeholder.dataset.loading = 'true';
+            placeholder.style.display = 'flex';
+            if (tEl) tEl.textContent = title || 'StreamChrome PRO';
+            if (pEl) pEl.textContent = detail || AppUI.translate('Loading…');
+        } else {
+            delete placeholder.dataset.loading;
+            if (tEl) tEl.textContent = 'StreamChrome PRO';
+            if (pEl) pEl.textContent = AppUI.translate('Open a local video or paste a video URL.');
+            if (video.getAttribute('src')) placeholder.style.display = 'none';
+        }
+    };
     const mediaTitleBar = $('mediaTitleBar'), selectAudio = $('selectAudio'), selectSub = $('selectSub');
     const playerWrapper = $('playerWrapper'), controlsOverlay = $('controlsOverlay');
     const seekBarContainer = $('seekBarContainer'), seekBarFill = $('seekBarFill'), timeBox = $('timeBox');
@@ -368,6 +384,7 @@
             notice('searchStatus', '');
             notice('vsrStatus', '');
             notice('playerStatus', 'Reading duration, video and audio tracks…');
+            window.setPlayerLoading?.(true, $('headerMediaTitle')?.textContent || $('placeholderTitle')?.textContent || 'StreamChrome PRO', AppUI.translate('Reading duration, video and audio tracks…'));
         }
         if (source !== inspectedSource) {
             try {
@@ -390,12 +407,14 @@
                 if (generation !== playbackGeneration) return;
                 currentLoadedUrl = '';
                 inspection = null;
+                window.setPlayerLoading?.(false);
                 placeholder.style.display = 'flex';
                 notice('playerStatus', error.message, true);
                 return;
             }
         }
         const requestedSeek = Math.max(0, Number(seekTarget) || 0);
+        window.setPlayerLoading?.(true, mediaTitleBar.textContent || $('headerMediaTitle')?.textContent || 'StreamChrome PRO', AppUI.translate('Preparing playback…'));
         try {
             const mode = $('videoMode').value;
             const playback = await api('/api/playback', {url:source, t:requestedSeek, compatibility:mode === 'compat' || mode === 'remote720', max_height:mode === 'remote720' ? 720 : 0});
@@ -403,15 +422,18 @@
             baseSeekSeconds = playback.start;
             pendingSeekWithinStream = Math.max(0, requestedSeek - baseSeekSeconds);
         } catch (error) {
-            if (generation === playbackGeneration) notice('playerStatus', error.message, true);
+            if (generation === playbackGeneration) {
+                window.setPlayerLoading?.(false);
+                notice('playerStatus', error.message, true);
+            }
             return;
         }
-        placeholder.style.display = 'none';
         const params = new URLSearchParams({url:source, t:String(requestedSeek)});
         if (selectAudio.value) params.set('a', selectAudio.value);
         if ($('videoMode').value === 'compat') params.set('compat', '1');
         if ($('videoMode').value === 'remote720') params.set('maxh', '720');
         document.body.dataset.hasMedia = 'true';
+        window.setPlayerLoading?.(true, mediaTitleBar.textContent || $('headerMediaTitle')?.textContent || 'StreamChrome PRO', AppUI.translate('Buffering video…'));
         video.src = '/stream?' + params;
         renderSubtitles();
         notice('playerStatus', 'Preparing playback…');
@@ -636,12 +658,14 @@
     }
     video.addEventListener('timeupdate', updateTimelineDisplay);
     video.addEventListener('loadedmetadata', () => { applyStreamSeek(); renderSubtitles(); showVideoResolution(); });
-    video.addEventListener('loadeddata', () => { applyStreamSeek(); renderSubtitles(); });
+    video.addEventListener('loadeddata', () => { window.setPlayerLoading?.(false); applyStreamSeek(); renderSubtitles(); });
+    video.addEventListener('canplay', () => { window.setPlayerLoading?.(false); });
     video.addEventListener('play', () => { updatePlayIcon(true); resetOverlayTimer(); startSubtitleFrames(); });
-    video.addEventListener('playing', () => notice('playerStatus', ''));
+    video.addEventListener('playing', () => { window.setPlayerLoading?.(false); notice('playerStatus', ''); });
     video.addEventListener('pause', () => { updatePlayIcon(false); resetOverlayTimer(); stopSubtitleFrames(); renderSubtitles(); });
     video.addEventListener('ended', () => { resetOverlayTimer(); updatePlayIcon(false); stopSubtitleFrames(); renderSubtitles(); });
     video.addEventListener('error', () => {
+        window.setPlayerLoading?.(false);
         if (video.getAttribute('src')) notice('playerStatus', 'Playback failed. Try H.264 compatibility mode or Open in VLC.', true);
     });
     api('/api/settings').then(showProviderSettings).catch(() => notice('settingsStatus', 'Could not read the settings.', true));

@@ -98,8 +98,15 @@
   if(!information.open)return;
   const rect=video.getBoundingClientRect(),quality=video.getVideoPlaybackQuality?.();
   const display=displayMetrics({sourceWidth:video.videoWidth,sourceHeight:video.videoHeight,width:rect.width,height:rect.height,pixelRatio:root.devicePixelRatio||1});
-  let buffer=0;for(let i=0;i<video.buffered.length;i++)if(video.buffered.start(i)<=video.currentTime&&video.buffered.end(i)>=video.currentTime)buffer=video.buffered.end(i)-video.currentTime;
-  const rows=[['Viewport / Scale',`${Math.round(rect.width)} × ${Math.round(rect.height)} / ${(root.devicePixelRatio||1).toFixed(2)}`],['Source resolution',`${video.videoWidth} × ${video.videoHeight}`],['Displayed image',display?`${display.width} × ${display.height} px`:'—'],['Frames',quality?`${quality.droppedVideoFrames} dropped / ${quality.totalVideoFrames} total`:'Unavailable'],['Volume',`${Math.round(video.volume*100)}%${video.muted?' · Muted':''}`],['Video codec',String(mediaMetadata.video_codec||'—').toUpperCase()],['Buffer health',`${buffer.toFixed(2)} s`],['Playback rate',`${video.playbackRate}×`],['Media time',`${video.currentTime.toFixed(2)} s`],['Ready / Network',`${video.readyState} / ${video.networkState}`],['RTX VSR / HDR','Check NVIDIA indicator'],['Date',new Date().toLocaleString()]];
+  let buffer=0,bufferedEnd=0;for(let i=0;i<video.buffered.length;i++){const s=video.buffered.start(i),e=video.buffered.end(i);if(e>bufferedEnd)bufferedEnd=e;if(s<=video.currentTime&&e>=video.currentTime)buffer=e-video.currentTime;}
+  const dur=Number.isFinite(video.duration)&&video.duration>0?video.duration:Number(mediaMetadata.duration||0);
+  const pct=dur>0?Math.min(100,(bufferedEnd/dur)*100):0;
+  const bufText=dur>0?`${buffer.toFixed(1)} s (${pct.toFixed(1)}% · ${Math.round(bufferedEnd)}s / ${Math.round(dur)}s)`:`${buffer.toFixed(2)} s`;
+  const netNames=['Empty','Idle','Loading data','Source error'];
+  const conn=root.navigator?.connection;
+  const dlSpeed=conn&&Number.isFinite(conn.downlink)?` · ${conn.downlink} Mbps`:'';
+  const netText=`${translate(netNames[video.networkState]||String(video.networkState))}${dlSpeed}`;
+  const rows=[['Viewport / Scale',`${Math.round(rect.width)} × ${Math.round(rect.height)} / ${(root.devicePixelRatio||1).toFixed(2)}`],['Source resolution',`${video.videoWidth} × ${video.videoHeight}`],['Displayed image',display?`${display.width} × ${display.height} px`:'—'],['Frames',quality?`${quality.droppedVideoFrames} dropped / ${quality.totalVideoFrames} total`:'Unavailable'],['Volume',`${Math.round(video.volume*100)}%${video.muted?' · Muted':''}`],['Video codec',String(mediaMetadata.video_codec||'—').toUpperCase()],['Loaded / Buffer',bufText],['Network',netText],['Playback rate',`${video.playbackRate}×`],['Media time',`${video.currentTime.toFixed(2)} s`],['Ready / Network',`${video.readyState} / ${video.networkState}`],['RTX VSR / HDR','Check NVIDIA indicator'],['Date',new Date().toLocaleString()]];
   statistics.replaceChildren(...rows.flatMap(([label,value])=>{const term=document.createElement('dt'),definition=document.createElement('dd');term.textContent=translate(label);definition.textContent=value;return [term,definition];}));
  }
  let statisticsTimer=null;

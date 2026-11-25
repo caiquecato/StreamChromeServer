@@ -193,7 +193,8 @@
         clearTimeout(heroTimer);
         const container = $('catalogView');
         if (!container) return;
-        const term = ($('hubSearchInput')?.value || '').trim().toLowerCase();
+        const rawTerm = ($('hubSearchInput')?.value || '').trim();
+        const term = rawTerm.toLowerCase();
         const filter = item => !term || `${item.title || ''} ${item.series_title || ''} ${item.filename || ''} ${item.imdb_id || ''}`.toLowerCase().includes(term);
 
         const movies = (catalogData.movies || []).filter(filter);
@@ -313,7 +314,7 @@
 
         if (!movies.length && !series.length && term) {
             children.push(el('div', { className: 'hub-empty-card' }, [
-                el('h2', { text: t('No local matches') }),
+                el('h2', { text: t('No local matches for {query}').replace('{query}', rawTerm) }),
                 el('p', { text: t('Search this title on Discover instead.') }),
                 el('div', { className: 'detail-actions' }, [
                     el('button', { type: 'button', className: 'btn btn-play', text: t('Search in Discover'), onClick: () => { setHubView('discover'); loadDiscover(); } }),
@@ -423,7 +424,8 @@
         } else if (!selected) {
             body = el('p', { className: 'notice', text: t('No catalogs for this type. Configure an addon that provides this catalog in Settings.') });
         } else if (!discoverState.items.length) {
-            body = el('p', { className: 'notice', text: t('No titles found. Try another title or IMDb ID (tt...).') });
+            const dq = String(discoverState.query || '').trim();
+            body = el('p', { className: 'notice', text: dq ? t('No titles found for {query}. Try another title or IMDb ID (tt...).').replace('{query}', dq) : t('No titles found. Try another title or IMDb ID (tt...).') });
         } else {
             body = el('div', { className: 'poster-grid' }, discoverState.items.map(item => makeMediaCard(item, {
                 isDiscover: true,
@@ -864,6 +866,7 @@
         closeModal();
         setHubView('player');
         const label = epObj ? `${meta.title} S${String(epObj.season).padStart(2, '0')}E${String(epObj.episode).padStart(2, '0')}` : (st.filename || meta.title || 'Stream');
+        root.setPlayerLoading?.(true, label, t('Opening media…'));
         await root.loadDownloadedVideo?.(st.stream_token, label, 0);
 
         const sel = $('selectSub');
@@ -1310,13 +1313,15 @@
 
     async function playCatalogItem(itemId, startSeconds = 0) {
         try {
+            setHubView('player');
+            root.setPlayerLoading?.(true, t('Loading…'), t('Opening media…'));
             const data = await callApi('/api/catalog/open', { id: itemId });
             catalogSources.set(data.source, data.item_id || itemId);
             currentNextEpisodeId = data.next_episode_id || '';
             currentAddonNextContext = null;
             pendingResumeSeconds = Number(startSeconds || 0);
             if ($('nextEpisodeButton')) $('nextEpisodeButton').hidden = !currentNextEpisodeId;
-            setHubView('player');
+            root.setPlayerLoading?.(true, data.filename || t('Loading…'), t('Reading duration, video and audio tracks…'));
             await root.loadDownloadedVideo?.(data.source, data.filename, pendingResumeSeconds > 10 ? pendingResumeSeconds : 0);
             if (data.local_subtitles?.length && typeof root.addSubtitle === 'function') {
                 for (const sub of data.local_subtitles) {

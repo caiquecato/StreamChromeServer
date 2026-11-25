@@ -62,8 +62,7 @@ html[data-layout='glass'] body:not([data-view='player']) .topbar {
     border: 0;
     z-index: 30;
 }
-html[data-layout='glass'] body:not([data-view='player']) .brand,
-html[data-layout='glass'] body[data-view='player'] .brand:not(:has(+ .header-film-title:not(:empty))) {
+html[data-layout='glass'] .brand {
     border-radius: 14px;
     padding: 6px 14px;
     min-height: 44px;

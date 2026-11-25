@@ -167,6 +167,10 @@ class CatalogService:
         item_id = hashlib.sha256(rel_posix.encode('utf-8')).hexdigest()[:16]
         guessed = guess_search(resolved.name)
         title = guessed.get('title') or resolved.stem
+        if '[' in title or ']' in title:
+            stripped = re.sub(r'\[[^\]]*\]', ' ', resolved.stem).replace('[', ' ').replace(']', ' ')
+            cleaned_guess = guess_search(re.sub(r'\s+', ' ', stripped).strip() + resolved.suffix)
+            title = cleaned_guess.get('title') or re.sub(r'[\[\]]', '', title).strip()
         year_str = guessed.get('year') or ''
         year = int(year_str) if str(year_str).isdigit() else None
         season = int(guessed.get('season') or 1) if kind == 'episode' else None
@@ -205,7 +209,7 @@ class CatalogService:
             'mtime': int(stat.st_mtime),
         }
 
-    def scan(self, async_enrich=True):
+    def scan(self, async_enrich=True, reenrich_missing=False):
         self.movies_dir.mkdir(parents=True, exist_ok=True)
         self.series_dir.mkdir(parents=True, exist_ok=True)
         discovered = []
@@ -230,6 +234,11 @@ class CatalogService:
             for item in discovered:
                 prev = existing.get(item['rel_path'])
                 if prev and prev['mtime'] == item['mtime'] and prev['size_bytes'] == item['size_bytes']:
+                    if reenrich_missing and not prev.get('imdb_id'):
+                        conn.execute(
+                            'UPDATE media_items SET title = ?, year = ?, enriched = 0 WHERE id = ?',
+                            (item['title'], item['year'], prev['id']),
+                        )
                     continue
                 conn.execute('''
                     INSERT INTO media_items (id, kind, series_key, series_title, title, year, season, episode, rel_path, filename, size_bytes, mtime, enriched)
@@ -240,6 +249,8 @@ class CatalogService:
                         rel_path=excluded.rel_path, filename=excluded.filename, size_bytes=excluded.size_bytes,
                         mtime=excluded.mtime, enriched=0
                 ''', item)
+            if reenrich_missing:
+                conn.execute("UPDATE media_items SET enriched = 0 WHERE imdb_id = '' OR poster_file = '' OR substr(poster_file, 1, 6) = 'thumb_'")
             conn.execute('DELETE FROM watch_progress WHERE id NOT IN (SELECT id FROM media_items)')
             conn.commit()
         if async_enrich:
@@ -387,39 +398,46 @@ class CatalogService:
                 continue
         return '', ''
 
-    def _fetch_online_meta(self, query, kind, year=None, cache_key='item'):
-        if not self.enable_online_metadata or not query:
+    def _fetch_online_meta(self, query, kind, year=None, cache_key='item', imdb_id=''):
+        if not self.enable_online_metadata or (not query and not imdb_id):
             return {}
         info = {
-            'imdb_id': '', 'poster_file': '', 'overview': '', 'cast_text': '',
+            'imdb_id': '', 'title': '', 'poster_file': '', 'overview': '', 'cast_text': '',
             'rating': None, 'rt_critics': '', 'rt_audience': '', 'genres_text': '', 'director_text': '',
         }
-        clean_q = re.sub(r'\s+', ' ', query).strip()
-        first = next((c.lower() for c in clean_q if c.isalnum()), 'x')
-        try:
-            data = _http_get_json(f'https://v3.sg.media-imdb.com/suggestion/{first}/{quote(clean_q)}.json')
-            allowed_qids = {'movie', 'tvMovie'} if kind == 'movie' else {'tvSeries', 'tvMiniSeries'}
-            candidates = [d for d in data.get('d', []) if str(d.get('id', '')).startswith('tt') and d.get('qid') in allowed_qids]
-            if not candidates:
-                candidates = [d for d in data.get('d', []) if str(d.get('id', '')).startswith('tt')]
-            if year and candidates:
-                candidates.sort(key=lambda d: abs(int(d.get('y') or year) - int(year)))
-            if candidates:
-                best = candidates[0]
-                info['imdb_id'] = str(best.get('id') or '')
-                info['cast_text'] = str(best.get('s') or '')
-                img_url = str((best.get('i') or {}).get('imageUrl') or '')
-                if img_url.startswith('https://'):
-                    sized = re.sub(r'\._V1_.*\.jpg$', '._V1_UX600_.jpg', img_url)
-                    try:
-                        img_bytes = _http_get_bytes(sized, timeout=10)
-                        poster_name = f'{cache_key}.jpg'
-                        (self.posters_dir / poster_name).write_bytes(img_bytes)
-                        info['poster_file'] = poster_name
-                    except (OSError, ValueError):
-                        pass
-        except (OSError, ValueError):
-            pass
+        clean_q = re.sub(r'\[[^\]]*\]', ' ', str(query or ''))
+        clean_q = re.sub(r'[\[\]]', ' ', clean_q)
+        clean_q = re.sub(r'\s+', ' ', clean_q).strip()
+        known_imdb = str(imdb_id or '').strip()
+        if re.fullmatch(r'tt\d{7,10}', known_imdb):
+            info['imdb_id'] = known_imdb
+        elif clean_q:
+            first = next((c.lower() for c in clean_q if c.isalnum()), 'x')
+            try:
+                data = _http_get_json(f'https://v3.sg.media-imdb.com/suggestion/{first}/{quote(clean_q)}.json')
+                allowed_qids = {'movie', 'tvMovie'} if kind == 'movie' else {'tvSeries', 'tvMiniSeries'}
+                candidates = [d for d in data.get('d', []) if str(d.get('id', '')).startswith('tt') and d.get('qid') in allowed_qids]
+                if not candidates:
+                    candidates = [d for d in data.get('d', []) if str(d.get('id', '')).startswith('tt')]
+                if year and candidates:
+                    candidates.sort(key=lambda d: abs(int(d.get('y') or year) - int(year)))
+                if candidates:
+                    best = candidates[0]
+                    info['imdb_id'] = str(best.get('id') or '')
+                    info['title'] = str(best.get('l') or '')
+                    info['cast_text'] = str(best.get('s') or '')
+                    img_url = str((best.get('i') or {}).get('imageUrl') or '')
+                    if img_url.startswith('https://'):
+                        sized = re.sub(r'\._V1_.*\.jpg$', '._V1_UX600_.jpg', img_url)
+                        try:
+                            img_bytes = _http_get_bytes(sized, timeout=10)
+                            poster_name = f'{cache_key}.jpg'
+                            (self.posters_dir / poster_name).write_bytes(img_bytes)
+                            info['poster_file'] = poster_name
+                        except (OSError, ValueError):
+                            pass
+            except (OSError, ValueError):
+                pass
 
         if kind == 'episode':
             try:
@@ -444,6 +462,8 @@ class CatalogService:
             c_kind = 'series' if kind == 'episode' else 'movie'
             try:
                 c_meta = _http_get_json(f'https://v3-cinemeta.strem.io/meta/{c_kind}/{info["imdb_id"]}.json').get('meta') or {}
+                if not info.get('title') and c_meta.get('name'):
+                    info['title'] = str(c_meta['name'])
                 if not info['overview'] and c_meta.get('description'):
                     info['overview'] = str(c_meta['description'])[:420]
                 if info['rating'] is None and c_meta.get('imdbRating'):
@@ -501,18 +521,20 @@ class CatalogService:
                                 series_cache[row['series_key']] = dict(existing_s)
                             else:
                                 series_cache[row['series_key']] = self._fetch_online_meta(
-                                    row['series_title'] or row['title'], 'episode', row['year'], f"series_{row['series_key']}"
+                                    row['series_title'] or row['title'], 'episode', row['year'], f"series_{row['series_key']}", imdb_id=row.get('imdb_id', '')
                                 )
                         meta = series_cache[row['series_key']]
                     else:
-                        meta = self._fetch_online_meta(row['title'], 'movie', row['year'], f"movie_{row['id']}")
+                        meta = self._fetch_online_meta(row['title'], 'movie', row['year'], f"movie_{row['id']}", imdb_id=row.get('imdb_id', ''))
 
                     poster_file = meta.get('poster_file') or thumb_name
                     backdrop_file = thumb_name or poster_file
+                    final_imdb = meta.get('imdb_id') or row.get('imdb_id') or ''
+                    final_title = (meta.get('title') or row['title']) if row['kind'] == 'movie' else row['title']
                     with self._connect() as conn:
                         conn.execute('''
                             UPDATE media_items SET
-                                duration = ?, width = ?, height = ?, video_codec = ?,
+                                title = ?, duration = ?, width = ?, height = ?, video_codec = ?,
                                 bitrate_bps = ?, fps = ?, video_profile = ?,
                                 audio_summary = ?, subtitle_summary = ?,
                                 imdb_id = ?, poster_file = ?, backdrop_file = ?,
@@ -521,10 +543,10 @@ class CatalogService:
                                 enriched = 1
                             WHERE id = ?
                         ''', (
-                            duration, probe.get('width', 0), probe.get('height', 0), probe.get('video_codec', ''),
+                            final_title, duration, probe.get('width', 0), probe.get('height', 0), probe.get('video_codec', ''),
                             probe.get('bitrate_bps', 0), probe.get('fps', ''), probe.get('video_profile', ''),
                             probe.get('audio_summary', ''), probe.get('subtitle_summary', ''),
-                            meta.get('imdb_id', ''), poster_file, backdrop_file,
+                            final_imdb, poster_file, backdrop_file,
                             meta.get('overview', ''), meta.get('cast_text', ''), meta.get('rating'),
                             meta.get('rt_critics', ''), meta.get('rt_audience', ''),
                             meta.get('genres_text', ''), meta.get('director_text', ''),

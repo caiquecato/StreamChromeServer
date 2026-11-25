@@ -78,7 +78,7 @@ for _d in (DATA_DIR, SERVER_ROOT / 'Movies', SERVER_ROOT / 'Series'):
         pass
 SETTINGS_DAT = DATA_DIR / 'server_settings.dat'
 SUBTITLE_SETTINGS_DAT = DATA_DIR / 'subtitle_settings.dat'
-APP_VERSION = '1.1.5'
+APP_VERSION = '1.1.6'
 INTEGRATION = WindowsIntegration(APP_DIRECTORY, DATA_DIR, APP_DIRECTORY / 'app.ico')
 UPDATER = Updater(APP_DIRECTORY, DATA_DIR, APP_VERSION)
 
@@ -706,7 +706,7 @@ class StreamProHandler(BaseHTTPRequestHandler):
             elif path == '/api/system/firewall':
                 self.send_json(trigger_firewall_rule())
             elif path == '/api/catalog/scan':
-                count = CATALOG.scan()
+                count = CATALOG.scan(reenrich_missing=True)
                 JELLYFIN.refresh_library()
                 self.send_json({'count': count, **CATALOG.get_home_catalog()})
             elif path == '/api/catalog/open':
