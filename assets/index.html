@@ -658,14 +658,30 @@
     }
     video.addEventListener('timeupdate', updateTimelineDisplay);
     video.addEventListener('loadedmetadata', () => { applyStreamSeek(); renderSubtitles(); showVideoResolution(); });
+    let streamRecoveryCount = 0;
     video.addEventListener('loadeddata', () => { window.setPlayerLoading?.(false); applyStreamSeek(); renderSubtitles(); });
     video.addEventListener('canplay', () => { window.setPlayerLoading?.(false); });
     video.addEventListener('play', () => { updatePlayIcon(true); resetOverlayTimer(); startSubtitleFrames(); });
-    video.addEventListener('playing', () => { window.setPlayerLoading?.(false); notice('playerStatus', ''); });
+    video.addEventListener('playing', () => { streamRecoveryCount = 0; window.setPlayerLoading?.(false); notice('playerStatus', ''); });
     video.addEventListener('pause', () => { updatePlayIcon(false); resetOverlayTimer(); stopSubtitleFrames(); renderSubtitles(); });
-    video.addEventListener('ended', () => { resetOverlayTimer(); updatePlayIcon(false); stopSubtitleFrames(); renderSubtitles(); });
+    video.addEventListener('ended', () => {
+        resetOverlayTimer(); updatePlayIcon(false); stopSubtitleFrames(); renderSubtitles();
+        const pos = baseSeekSeconds + (video.currentTime || 0);
+        if (movieTotalDuration > 30 && pos < movieTotalDuration - 10 && streamRecoveryCount < 3) {
+            streamRecoveryCount++;
+            notice('playerStatus', 'Reconnecting stream…');
+            startPlayback(pos);
+        }
+    });
     video.addEventListener('error', () => {
         window.setPlayerLoading?.(false);
+        const pos = baseSeekSeconds + (video.currentTime || 0);
+        if (video.getAttribute('src') && pos > 1 && streamRecoveryCount < 3) {
+            streamRecoveryCount++;
+            notice('playerStatus', 'Reconnecting stream…');
+            startPlayback(pos);
+            return;
+        }
         if (video.getAttribute('src')) notice('playerStatus', 'Playback failed. Try H.264 compatibility mode or Open in VLC.', true);
     });
     api('/api/settings').then(showProviderSettings).catch(() => notice('settingsStatus', 'Could not read the settings.', true));

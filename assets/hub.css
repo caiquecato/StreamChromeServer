@@ -51,11 +51,11 @@ html[data-layout='library'] body:not([data-view='player']) .header-actions > .he
 }
 html[data-layout='glass'] body:not([data-view='player']) .topbar {
     position: sticky;
-    top: 12px;
+    top: 16px;
     inset: auto;
-    margin: 12px 24px 0;
-    height: auto;
-    min-height: 46px;
+    margin: 16px 22px 0;
+    height: 44px;
+    min-height: 44px;
     padding: 0;
     gap: 12px;
     background: transparent;
@@ -246,7 +246,7 @@ body:not([data-view='player']) .header-film-title {
 .hub-featured {
     position: relative;
     display: grid;
-    grid-template-columns: minmax(0, 1.15fr) minmax(260px, 0.85fr);
+    grid-template-columns: minmax(0, 1fr) minmax(200px, 260px);
     min-height: 290px;
     border: 1px solid var(--border);
     border-radius: 12px;
@@ -294,20 +294,22 @@ body:not([data-view='player']) .header-film-title {
 .hub-featured-media {
     position: relative;
     min-height: 220px;
-    background: var(--bg-card);
+    padding: 16px 20px 16px 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
 }
 .hub-featured-media img {
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    max-height: 310px;
+    object-fit: contain;
+    border-radius: 10px;
     display: block;
 }
 .hub-featured-media::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(90deg, var(--bg-surface) 0%, transparent 42%);
-    pointer-events: none;
+    content: none;
 }
 
 .hub-section {
@@ -943,22 +945,21 @@ html[data-layout='cinema'] .hub-stage .media-thumb img { object-position: center
 html[data-layout='cinema'] .hub-stage .media-card-title { font-size: 16px; }
 html[data-layout='cinema'] .hub-stage .hub-section-head h2 { font-size: 24px; font-weight: 700; }
 
-/* Classic: compact utility cards, horizontal information and a low feature. */
-html[data-layout='classic'] body:not([data-view='player']) .hub-stage { max-width: 1500px; padding: 20px 24px 48px; }
-html[data-layout='classic'] .hub-stage > :is(#catalogView, #discoverView) { gap: 24px; }
-html[data-layout='classic'] .hub-stage .hub-featured { grid-template-columns: minmax(0, 1fr) minmax(0, .55fr); min-height: 230px; border-radius: 4px; }
-html[data-layout='classic'] .hub-stage .hub-featured-info { padding: 24px; gap: 10px; }
-html[data-layout='classic'] .hub-stage .hub-featured-info h1 { font-size: 26px; letter-spacing: -.02em; }
-html[data-layout='classic'] .hub-stage .hub-featured-media { min-height: 200px; }
-html[data-layout='classic'] .hub-stage :is(.poster-grid, .wide-grid) { grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 8px 16px; }
-html[data-layout='classic'] .hub-stage .media-card { display: grid; grid-template-columns: 88px minmax(0, 1fr); grid-template-rows: 1fr 1fr; gap: 6px 14px; padding: 8px; border-radius: 4px; background: var(--bg-surface); }
-html[data-layout='classic'] .hub-stage .media-thumb { grid-column: 1; grid-row: 1 / 3; aspect-ratio: 3 / 4; border-radius: 3px; }
-html[data-layout='classic'] .hub-stage .media-card-title { grid-column: 2; align-self: end; padding: 0; font-size: 14px; }
-html[data-layout='classic'] .hub-stage .media-card-sub { grid-column: 2; align-self: start; padding: 0; font-size: 12px; }
-html[data-layout='classic'] .hub-stage .media-card-wrap .media-card { padding-right: 48px; }
-html[data-layout='classic'] .hub-stage .media-more-btn { top: 8px; right: 8px; opacity: 1; background: var(--bg-card); color: var(--text-main); border-color: var(--border); }
-html[data-layout='classic'] .hub-stage .hub-section-head { border-bottom: 1px solid var(--border); padding-bottom: 8px; }
-html[data-layout='classic'] .hub-stage .hub-section-head h2 { font-size: 17px; }
+/* Classic: crisp structured grid, balanced poster cards and clean feature. */
+html[data-layout='classic'] body:not([data-view='player']) .hub-stage { max-width: 1460px; padding: 24px 28px 56px; }
+html[data-layout='classic'] .hub-stage > :is(#catalogView, #discoverView) { gap: 28px; }
+html[data-layout='classic'] .hub-stage .hub-featured { grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); min-height: 270px; border-radius: 8px; }
+html[data-layout='classic'] .hub-stage .hub-featured-info { padding: 28px; gap: 12px; }
+html[data-layout='classic'] .hub-stage .hub-featured-info h1 { font-size: clamp(22px, 2.4vw, 30px); letter-spacing: -.02em; }
+html[data-layout='classic'] .hub-stage .hub-featured-media { min-height: 240px; }
+html[data-layout='classic'] .hub-stage .poster-grid { grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 20px 16px; }
+html[data-layout='classic'] .hub-stage .wide-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+html[data-layout='classic'] .hub-stage .media-card { padding: 4px; border-radius: 8px; gap: 8px; }
+html[data-layout='classic'] .hub-stage .media-thumb { border-radius: 6px; }
+html[data-layout='classic'] .hub-stage .media-card-title { font-size: 14px; font-weight: 600; }
+html[data-layout='classic'] .hub-stage .media-card-sub { font-size: 12px; }
+html[data-layout='classic'] .hub-stage .hub-section-head { border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+html[data-layout='classic'] .hub-stage .hub-section-head h2 { font-size: 18px; }
 
 /* Studio: an editorial workspace, broad text column and precise four-up board. */
 html[data-layout='studio'] body:not([data-view='player']) .hub-stage { max-width: 1520px; padding: 32px 40px 72px; }
@@ -995,7 +996,7 @@ html[data-layout='library'] .hub-stage .hub-section-head h2 { font-family: Georg
 html[data-layout='library'] .hub-stage .media-card:hover { transform: none; }
 
 /* Quiet Glass: an airy centered collection and generous portrait artwork. */
-html[data-layout='glass'] body:not([data-view='player']) .topbar { margin: 16px 32px 0; padding: 0; }
+html[data-layout='glass'] body:not([data-view='player']) .topbar { margin: 16px 22px 0; padding: 0; height: 44px; min-height: 44px; }
 html[data-layout='glass'] body:not([data-view='player']) .hub-stage { max-width: 1160px; padding: 40px 32px 80px; }
 html[data-layout='glass'] .hub-stage > :is(#catalogView, #discoverView) { gap: 48px; }
 html[data-layout='glass'] .hub-stage .hub-featured { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); min-height: 350px; border-radius: 16px; }
@@ -1096,28 +1097,41 @@ html[data-layout='glass'] .hub-stage .hub-section-head h2 { font-size: 23px; fon
 }
 
 .hub-featured .hero-controls {
-    grid-column: 1 / -1;
+    position: absolute;
+    right: 14px;
+    bottom: 14px;
     display: flex;
     align-items: center;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: 10px 16px;
-    position: relative;
+    gap: 6px;
+    padding: 4px 6px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--bg-surface) 84%, transparent);
     z-index: 3;
 }
 .hub-featured .hero-controls button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 44px;
-    min-height: 44px;
-    padding: 8px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    min-width: 34px;
+    min-height: 34px;
+    padding: 6px;
+    border: 1px solid transparent;
+    border-radius: 7px;
     color: var(--text-main);
-    background: var(--field, var(--bg-surface));
+    background: transparent;
     cursor: pointer;
 }
-.hub-featured .hero-controls button:hover { background: var(--bg-card); }
+.hub-featured .hero-controls button:hover { background: var(--bg-card); border-color: var(--border); }
 .hub-featured .hero-controls button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.stream-lang-select {
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-main);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
 #discoverView .discover-pagination { display: grid; justify-items: center; gap: 12px; padding-block: 24px; }

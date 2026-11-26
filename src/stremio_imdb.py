@@ -26,8 +26,48 @@ ADDON_STREAMS_LOCK = threading.RLock()
 STREAM_ID_SECRET = secrets.token_bytes(32)
 
 _NOISE_EMOJI_RE = re.compile(r'[\U0001F300-\U0001FAFF\u2600-\u27BF]+')
-_PT_AUDIO_RE = re.compile(r'\b(portuguese|portugu[eê]s|pt-?br|dublado|dual\s*audio)\b|(\bpob\b|\bpor\b)', re.I)
+_PT_AUDIO_RE = re.compile(r'\b(portuguese|portugu[eê]s|pt-?br)\b|(\bpob\b|\bpor\b)', re.I)
+_LANG_RULES = (
+    ('Portuguese', re.compile(r'\b(portuguese|portugu[eê]s|pt-?br|pob|por)\b', re.I)),
+    ('English', re.compile(r'\b(english|eng)\b', re.I)),
+    ('Spanish', re.compile(r'\b(spanish|espa[nñ]ol|latino|spa|esp)\b', re.I)),
+    ('French', re.compile(r'\b(french|fran[cç]ais|fre|fra)\b', re.I)),
+    ('German', re.compile(r'\b(german|deutsch|ger|deu)\b', re.I)),
+    ('Italian', re.compile(r'\b(italian|italiano|ita)\b', re.I)),
+    ('Japanese', re.compile(r'\b(japanese|jpn|jap)\b', re.I)),
+    ('Korean', re.compile(r'\b(korean|kor)\b', re.I)),
+    ('Ukrainian', re.compile(r'\b(ukrainian|ukr)\b', re.I)),
+    ('Russian', re.compile(r'\b(russian|rus)\b', re.I)),
+    ('Hindi', re.compile(r'\b(hindi|hin)\b', re.I)),
+    ('Dual Audio', re.compile(r'\b(dual\s*audio|multi)\b', re.I)),
+)
 _RES_RE = re.compile(r'\b(2160p|4k|uhd|1080p|720p|480p)\b', re.I)
+
+
+def _detect_audio_languages(text):
+    audio_part = re.split(r'\bsub(?:titles|s)?\s*:', str(text or ''), maxsplit=1, flags=re.I)[0]
+    return [label for label, pat in _LANG_RULES if pat.search(audio_part)]
+
+
+def resolve_imdb_id(kind, title, year=''):
+    clean_q = re.sub(r'\[[^\]]*\]', ' ', str(title or ''))
+    clean_q = re.sub(r'\s+', ' ', clean_q).strip()
+    if not clean_q:
+        return ''
+    first = next((c.lower() for c in clean_q if c.isalnum()), 'x')
+    try:
+        data = _http_json(f'https://v3.sg.media-imdb.com/suggestion/{first}/{quote(clean_q)}.json', timeout=8)
+    except ValueError:
+        return ''
+    allowed_qids = {'movie', 'tvMovie'} if kind == 'movie' else {'tvSeries', 'tvMiniSeries'}
+    candidates = [d for d in data.get('d', []) if IMDB_ID_RE.fullmatch(str(d.get('id') or '')) and d.get('qid') in allowed_qids]
+    if not candidates:
+        candidates = [d for d in data.get('d', []) if IMDB_ID_RE.fullmatch(str(d.get('id') or ''))]
+    y_match = re.search(r'(19|20)\d{2}', str(year or ''))
+    if y_match and candidates:
+        y_int = int(y_match.group(0))
+        candidates.sort(key=lambda d: abs(int(d.get('y') or y_int) - y_int))
+    return str(candidates[0].get('id') or '') if candidates else ''
 
 
 def urlopen_resilient(req, timeout=25):
@@ -310,7 +350,9 @@ def _parse_addon_stream(addon_name, item, kind, video_id):
         if m_size:
             size_label = m_size.group(1).upper()
 
-    pt_audio = bool(_PT_AUDIO_RE.search(combined))
+    audio_part = re.split(r'\bsub(?:titles|s)?\s*:', combined, maxsplit=1, flags=re.I)[0]
+    languages = _detect_audio_languages(combined)
+    pt_audio = bool(_PT_AUDIO_RE.search(audio_part))
     cached = bool(stream_url.startswith(('https://', 'http://')) and ('⚡' in raw_name or 'TB' in raw_name or 'RD' in raw_name or 'AD' in raw_name or 'instant' in combined.lower()))
 
     parts = video_id.split(':')
@@ -346,6 +388,7 @@ def _parse_addon_stream(addon_name, item, kind, video_id):
             'size_bytes': video_size,
             'size_label': size_label,
             'pt_audio': pt_audio,
+            'languages': languages,
             'cached': cached,
             'binge_group': binge_group,
             'stream_token': stream_token,
@@ -362,6 +405,7 @@ def _parse_addon_stream(addon_name, item, kind, video_id):
             'size_bytes': video_size,
             'size_label': size_label,
             'pt_audio': pt_audio,
+            'languages': languages,
             'cached': False,
             'binge_group': binge_group,
             'playable': False,

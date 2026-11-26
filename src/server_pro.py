@@ -35,7 +35,7 @@ from subtitles import SubtitleService, ProviderError, load_settings, http_json, 
 from catalog_service import CatalogService
 from jellyfin_bridge import JellyfinBridge
 from remote_access import RemoteAccessService, is_autostart_enabled, is_loopback_client, is_private_or_loopback, render_pin_gate_html, set_autostart
-from stremio_imdb import StremioAddonManager, discover as imdb_discover, get_addon_stream, get_genres as imdb_genres, get_meta as imdb_get_meta
+from stremio_imdb import StremioAddonManager, discover as imdb_discover, get_addon_stream, get_genres as imdb_genres, get_meta as imdb_get_meta, resolve_imdb_id
 from library_downloader import LibraryDownloadService
 
 class HTTPServer(ThreadingHTTPServer):
@@ -78,7 +78,7 @@ for _d in (DATA_DIR, SERVER_ROOT / 'Movies', SERVER_ROOT / 'Series'):
         pass
 SETTINGS_DAT = DATA_DIR / 'server_settings.dat'
 SUBTITLE_SETTINGS_DAT = DATA_DIR / 'subtitle_settings.dat'
-APP_VERSION = '1.1.6'
+APP_VERSION = '1.1.8'
 INTEGRATION = WindowsIntegration(APP_DIRECTORY, DATA_DIR, APP_DIRECTORY / 'app.ico')
 UPDATER = Updater(APP_DIRECTORY, DATA_DIR, APP_VERSION)
 
@@ -319,7 +319,9 @@ def detect_nvenc():
 
 
 def build_stream_command(source, metadata, seek, audio='', compatibility=False, max_height=0, use_nvenc=False):
-    cmd = [FFMPEG_BIN, '-nostdin', '-hide_banner', '-loglevel', 'error', '-ss', str(seek)]
+    cmd = [FFMPEG_BIN, '-nostdin', '-hide_banner', '-loglevel', 'error', '-fflags', '+genpts+discardcorrupt', '-ss', str(seek)]
+    if str(source).startswith(('http://', 'https://')):
+        cmd += ['-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5']
     if metadata.get('headers'): cmd += ['-headers', metadata['headers']]
     cmd += ['-i', source]
     if metadata.get('audio_url'):
@@ -348,7 +350,7 @@ def build_stream_command(source, metadata, seek, audio='', compatibility=False, 
             cmd += ['-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', '23', '-pix_fmt', 'yuv420p']
         else:
             cmd += ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', 'yuv420p']
-    cmd += ['-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-sn', '-dn', '-map_chapters', '-1', '-avoid_negative_ts', 'make_zero', '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov+default_base_moof', 'pipe:1']
+    cmd += ['-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-sn', '-dn', '-map_chapters', '-1', '-avoid_negative_ts', 'make_zero', '-max_muxing_queue_size', '2048', '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov+default_base_moof', 'pipe:1']
     return cmd
 
 
@@ -557,6 +559,11 @@ class StreamProHandler(BaseHTTPRequestHandler):
             elif parsed.path == '/api/imdb/meta':
                 kind = query.get('kind', ['movie'])[0]
                 imdb_id = query.get('id', [''])[0]
+                if not re.fullmatch(r'tt\d{7,10}', str(imdb_id or '')):
+                    resolved_id = resolve_imdb_id(kind, query.get('title', [''])[0], query.get('year', [''])[0])
+                    if not resolved_id:
+                        raise ValueError('Could not match an IMDb title for this item.')
+                    imdb_id = resolved_id
                 meta = imdb_get_meta(kind, imdb_id)
                 local_matches = CATALOG.find_local_by_imdb(imdb_id)
                 stream_id = query.get('video_id', [''])[0] or (f'{imdb_id}:1:1' if kind == 'series' else imdb_id)

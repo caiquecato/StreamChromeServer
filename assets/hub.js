@@ -349,8 +349,13 @@
     }
 
     function discoverCatalogOptions() {
-        return (discoverState.catalogs || []).filter(c => discoverState.kind === 'other'
-            ? !['movie', 'series', 'anime'].includes(c.kind) : c.kind === discoverState.kind);
+        const blockedFilters = new Set(['lastVideosIds', 'calendarVideosIds', 'search']);
+        return (discoverState.catalogs || []).filter(c => {
+            const matchKind = discoverState.kind === 'other'
+                ? !['movie', 'series', 'anime'].includes(c.kind) : c.kind === discoverState.kind;
+            if (!matchKind) return false;
+            return !(c.required_filters || []).some(f => blockedFilters.has(f));
+        });
     }
 
     function activeDiscoverCatalog() {
@@ -406,7 +411,7 @@
             loadDiscover();
         } }, [
             ...(!selected?.required_filters?.includes('genre') ? [el('option', { value: '', text: t(yearFilter ? 'All years' : 'All genres') })] : []),
-            ...genres.map(g => el('option', { value: g, text: g })),
+            ...genres.map(g => el('option', { value: g, text: t(g) })),
         ]);
         genreSelect.value = discoverState.genre;
         genreSelect.disabled = !selected?.genre_filter || !genres.length;
@@ -430,8 +435,8 @@
             body = el('div', { className: 'poster-grid' }, discoverState.items.map(item => makeMediaCard(item, {
                 isDiscover: true,
                 onClick: () => {
-                    if (item.playable !== false && ['movie', 'series'].includes(item.kind) && item.imdb_id) {
-                        openImdbModal(item.kind, item.imdb_id);
+                    if (['movie', 'series'].includes(item.kind) && (item.imdb_id || item.title)) {
+                        openImdbModal(item.kind, item.imdb_id || '', '', item.title || '', item.year || '');
                     } else if (item.stremio_url?.startsWith('stremio:///detail/')) {
                         root.open(item.stremio_url, '_blank', 'noopener');
                     }
@@ -928,10 +933,12 @@
         }
     }
 
-    async function openImdbModal(kind, imdbId, initialVideoId = '') {
+    async function openImdbModal(kind, imdbId, initialVideoId = '', fallbackTitle = '', fallbackYear = '') {
         openModal(t('Discover'), [el('p', { className: 'notice', text: t('Loading IMDb & Stremio metadata…') })], 'imdb');
         try {
-            const params = new URLSearchParams({ kind, id: imdbId, streams: '0' });
+            const params = new URLSearchParams({ kind, id: imdbId || '', streams: '0' });
+            if (fallbackTitle) params.set('title', fallbackTitle);
+            if (fallbackYear) params.set('year', fallbackYear);
             const meta = await callApi('/api/imdb/meta?' + params);
             currentImdbMeta = meta;
 
@@ -977,6 +984,7 @@
             let activeEp = null;
             let streamFetchGen = 0;
 
+            let activeLang = 'all';
             const drawStreams = () => {
                 if (!loadedStreams.length) {
                     streamFilters.hidden = true;
@@ -987,34 +995,49 @@
                     all: loadedStreams.length,
                     '4K': loadedStreams.filter(s => s.resolution === '4K').length,
                     '1080p': loadedStreams.filter(s => s.resolution === '1080p').length,
-                    pt: loadedStreams.filter(s => s.pt_audio).length,
                 };
+                const langCounts = new Map();
+                for (const s of loadedStreams) {
+                    for (const l of (s.languages || [])) langCounts.set(l, (langCounts.get(l) || 0) + 1);
+                }
                 if (!counts[activeFilter] && activeFilter !== 'all') activeFilter = 'all';
+                if (activeLang !== 'all' && !langCounts.has(activeLang)) activeLang = 'all';
                 streamFilters.hidden = false;
+                const langSelect = langCounts.size ? el('select', {
+                    className: 'stream-lang-select',
+                    'aria-label': t('Language'),
+                    onChange: e => { activeLang = e.target.value; drawStreams(); },
+                }, [
+                    el('option', { value: 'all', text: t('All languages') }),
+                    ...Array.from(langCounts.entries()).map(([lang, cnt]) => el('option', { value: lang, text: `${t(lang)} (${cnt})` })),
+                ]) : null;
+                if (langSelect) langSelect.value = activeLang;
+
                 streamFilters.replaceChildren(
                     ...[
                         ['all', `${t('All sources')} (${counts.all})`],
                         counts['4K'] ? ['4K', `4K (${counts['4K']})`] : null,
                         counts['1080p'] ? ['1080p', `1080p (${counts['1080p']})`] : null,
-                        counts.pt ? ['pt', `PT / Dual (${counts.pt})`] : null,
                     ].filter(Boolean).map(([fKey, label]) => el('button', {
                         type: 'button', text: label, 'aria-pressed': String(activeFilter === fKey),
                         onClick: () => { activeFilter = fKey; drawStreams(); },
                     })),
+                    ...(langSelect ? [langSelect] : []),
                 );
 
                 const visible = loadedStreams.filter(st => {
-                    if (activeFilter === '4K') return st.resolution === '4K';
-                    if (activeFilter === '1080p') return st.resolution === '1080p';
-                    if (activeFilter === 'pt') return st.pt_audio;
+                    if (activeFilter === '4K' && st.resolution !== '4K') return false;
+                    if (activeFilter === '1080p' && st.resolution !== '1080p') return false;
+                    if (activeLang !== 'all' && !(st.languages || []).includes(activeLang)) return false;
                     return true;
                 });
 
                 streamList.replaceChildren(...visible.map(st => {
+                    const langs = (st.languages || []).slice(0, 3);
                     const badges = [
                         st.resolution ? el('span', { className: st.resolution === '4K' ? 'stream-tag stream-tag-accent' : 'stream-tag', text: st.resolution }) : null,
                         st.cached ? el('span', { className: 'stream-tag', text: 'TB Instant' }) : null,
-                        st.pt_audio ? el('span', { className: 'stream-tag stream-tag-accent', text: 'PT / Dual' }) : null,
+                        ...langs.map(l => el('span', { className: l === 'Portuguese' ? 'stream-tag stream-tag-accent' : 'stream-tag', text: t(l) })),
                         st.size_label ? el('span', { className: 'stream-tag', text: st.size_label }) : null,
                         el('span', { className: 'stream-tag', text: st.addon || 'Addon' }),
                     ].filter(Boolean);
